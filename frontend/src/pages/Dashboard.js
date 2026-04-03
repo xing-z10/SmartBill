@@ -15,16 +15,14 @@ export default function Dashboard() {
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [isSplitModalOpen, setIsSplitModalOpen] = useState(false);
   const [stats, setStats] = useState({
-    totalExpenses: 0,
+    myOwed: 0,
     totalAmount: 0,
     activeParticipants: 0,
-    avgPerExpense: 0,
+    avgOwed: 0,
   });
 
-  /* --------- 展开 / 收起 --------- */
   const [showAll, setShowAll] = useState(false);
-  const DISPLAY_COUNT = 3;               // 默认显示条数
-  /* -------------------------------- */
+  const DISPLAY_COUNT = 3;
 
   useEffect(() => {
     (async () => {
@@ -39,15 +37,36 @@ export default function Dashboard() {
         setExpenses(my);
         setSharedExpenses(shared);
 
-        const total = myRes.total || 0;
-        const amount = my.reduce((s, e) => s + Number(e.total_amount || 0), 0);
+        // 所有账单总额
+        const totalAmount = my.reduce((s, e) => s + Number(e.total_amount || 0), 0);
+
+        // 我需要支付的总额
+        let myOwed = 0;
+        my.forEach((e) => {
+          const me = e.participants?.find((p) =>
+            p.name === 'me (You)' || p.name === 'me'
+          );
+          if (me && e.items) {
+            (me.items || []).forEach((itemName) => {
+              const shareCount = e.participants.filter((pp) => pp.items?.includes(itemName)).length;
+              const item = e.items.find((i) => i.name === itemName);
+              if (item && shareCount > 0) myOwed += Number(item.price || 0) / shareCount;
+            });
+          }
+        });
+
+        // 所有参与者去重
         const participants = new Set();
         my.forEach((e) => e.participants?.forEach((p) => participants.add(p.name)));
+
+        // 我平均每笔需要支付的金额
+        const avgOwed = my.length ? myOwed / my.length : 0;
+
         setStats({
-          totalExpenses: total,
-          totalAmount: amount,
+          myOwed,
+          totalAmount,
           activeParticipants: participants.size,
-          avgPerExpense: total ? amount / total : 0,
+          avgOwed,
         });
       } catch (err) {
         console.error(err);
@@ -75,16 +94,13 @@ export default function Dashboard() {
   const displayExpenses = activeTab === 'my' ? expenses : sharedExpenses;
 
   const statCards = [
-    { icon: <Receipt size={24} />, value: stats.totalExpenses, label: 'Total Expenses', color: 'bg-blue-600' },
-    { icon: <DollarSign size={24} />, value: `$${stats.totalAmount.toFixed(2)}`, label: 'Total Amount', color: 'bg-emerald-600' },
+    { icon: <DollarSign size={24} />, value: `$${stats.myOwed.toFixed(2)}`, label: 'My Total Owed', color: 'bg-blue-600' },
+    { icon: <Receipt size={24} />, value: `$${stats.totalAmount.toFixed(2)}`, label: 'Total Amount', color: 'bg-emerald-600' },
     { icon: <Users size={24} />, value: stats.activeParticipants, label: 'Active Participants', color: 'bg-purple-600' },
-    { icon: <TrendingUp size={24} />, value: `$${stats.avgPerExpense.toFixed(2)}`, label: 'Avg. per Expense', color: 'bg-orange-600' },
+    { icon: <TrendingUp size={24} />, value: `$${stats.avgOwed.toFixed(2)}`, label: 'Avg. I Owe per Bill', color: 'bg-orange-600' },
   ];
 
-  /* 需要展示的记录 */
-  const visibleList = showAll
-    ? displayExpenses
-    : displayExpenses.slice(0, DISPLAY_COUNT);
+  const visibleList = showAll ? displayExpenses : displayExpenses.slice(0, DISPLAY_COUNT);
 
   return (
     <main className="max-w-7xl mx-auto px-6 py-8">
@@ -122,10 +138,7 @@ export default function Dashboard() {
             {['my', 'shared'].map((t) => (
               <button
                 key={t}
-                onClick={() => {
-                  setActiveTab(t);
-                  setShowAll(false);          // 切换标签时重置展开状态
-                }}
+                onClick={() => { setActiveTab(t); setShowAll(false); }}
                 className={`px-3 py-1.5 text-sm font-medium rounded-lg border transition ${activeTab === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
               >
                 {t === 'my' ? `My Expenses (${expenses.length})` : `Shared with Me (${sharedExpenses.length})`}
@@ -144,7 +157,7 @@ export default function Dashboard() {
                 {activeTab === 'my' ? 'No expenses yet' : 'No shared expenses yet'}
               </div>
               <p className="text-sm text-gray-500 mt-1">
-                {activeTab === 'my' ? 'Create your first expense to get started' : 'When friends split bills with you, they\'ll appear here'}
+                {activeTab === 'my' ? 'Create your first expense to get started' : "When friends split bills with you, they'll appear here"}
               </p>
               {activeTab === 'my' && (
                 <button onClick={() => navigate('/new-expense')} className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
@@ -154,15 +167,11 @@ export default function Dashboard() {
             </div>
           ) : (
             <>
-              {/* 列表 */}
               <div className="space-y-3">
                 {visibleList.map((exp) => (
                   <div key={exp.id} className="relative bg-white border border-gray-200 rounded-lg p-4 hover:shadow transition">
                     <div className="flex items-start justify-between">
-                      <div
-                        className="flex-1 cursor-pointer"
-                        onClick={() => navigate(`/expense/${exp.id}`)}
-                      >
+                      <div className="flex-1 cursor-pointer" onClick={() => navigate(`/expense/${exp.id}`)}>
                         <div className="flex items-center justify-between mb-1">
                           <span className="font-semibold text-gray-900">{exp.store_name || 'Unknown Store'}</span>
                           <span className="text-lg font-bold text-emerald-600">${Number(exp.total_amount).toFixed(2)}</span>
@@ -170,37 +179,23 @@ export default function Dashboard() {
                         <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
                           <span>{new Date(exp.created_at).toLocaleDateString()}</span>
                           {exp.items?.length > 0 && <span>{exp.items.length} items</span>}
-                          {exp.transcript && (
-                            <span className="italic text-gray-400"> {exp.transcript.slice(0, 50)}…</span>
-                          )}
+                          {exp.transcript && <span className="italic text-gray-400"> {exp.transcript.slice(0, 50)}…</span>}
                         </div>
                       </div>
-
                       <div className="flex items-center gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
                         {activeTab === 'my' && (
                           <>
-                            <button
-                              onClick={() => handleSplitBill(exp)}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50"
-                            >
-                              <Share2 size={16} />
-                              Split
+                            <button onClick={() => handleSplitBill(exp)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50">
+                              <Share2 size={16} /> Split
                             </button>
-                            <button
-                              onClick={() => handleDeleteExpense(exp.id, exp.store_name)}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 border border-red-200 text-red-600 rounded-md hover:bg-red-50"
-                            >
+                            <button onClick={() => handleDeleteExpense(exp.id, exp.store_name)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-red-200 text-red-600 rounded-md hover:bg-red-50">
                               <Trash2 size={16} />
                             </button>
                           </>
                         )}
                         {activeTab === 'shared' && (
-                          <button
-                            onClick={() => navigate(`/expense/${exp.id}`)}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 border border-gray-300 text-gray-600 rounded-md hover:bg-gray-50"
-                          >
-                            <Eye size={16} />
-                            View
+                          <button onClick={() => navigate(`/expense/${exp.id}`)} className="inline-flex items-center gap-1 px-3 py-1.5 border border-gray-300 text-gray-600 rounded-md hover:bg-gray-50">
+                            <Eye size={16} /> View
                           </button>
                         )}
                       </div>
@@ -209,13 +204,9 @@ export default function Dashboard() {
                 ))}
               </div>
 
-              {/* More / Less 按钮 */}
               {displayExpenses.length > DISPLAY_COUNT && (
                 <div className="mt-4 text-center">
-                  <button
-                    onClick={() => setShowAll((v) => !v)}
-                    className="px-4 py-2 text-sm text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50"
-                  >
+                  <button onClick={() => setShowAll((v) => !v)} className="px-4 py-2 text-sm text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50">
                     {showAll ? 'Show less' : `Show all (${displayExpenses.length})`}
                   </button>
                 </div>
@@ -227,53 +218,29 @@ export default function Dashboard() {
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8">
-        <button
-          onClick={() => navigate('/new-expense')}
-          className="bg-white border border-gray-200 rounded-xl p-6 text-left hover:shadow transition"
-        >
-          <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center mb-3">
-            <Plus size={24} />
-          </div>
+        <button onClick={() => navigate('/new-expense')} className="bg-white border border-gray-200 rounded-xl p-6 text-left hover:shadow transition">
+          <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center mb-3"><Plus size={24} /></div>
           <h3 className="font-semibold text-gray-900 mb-1">Create Expense</h3>
           <p className="text-sm text-gray-500">Upload a bill and split expenses with AI</p>
         </button>
-
-        <button
-          onClick={() => navigate('/participants')}
-          className="bg-white border border-gray-200 rounded-xl p-6 text-left hover:shadow transition"
-        >
-          <div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center mb-3">
-            <Users size={24} />
-          </div>
+        <button onClick={() => navigate('/participants')} className="bg-white border border-gray-200 rounded-xl p-6 text-left hover:shadow transition">
+          <div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center mb-3"><Users size={24} /></div>
           <h3 className="font-semibold text-gray-900 mb-1">Manage Contacts</h3>
           <p className="text-sm text-gray-500">Add friends to split bills with</p>
         </button>
-
-        <button
-          onClick={() => navigate('/history')}
-          className="bg-white border border-gray-200 rounded-xl p-6 text-left hover:shadow transition"
-        >
-          <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center mb-3">
-            <FileText size={24} />
-          </div>
+        <button onClick={() => navigate('/history')} className="bg-white border border-gray-200 rounded-xl p-6 text-left hover:shadow transition">
+          <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center mb-3"><FileText size={24} /></div>
           <h3 className="font-semibold text-gray-900 mb-1">View History</h3>
           <p className="text-sm text-gray-500">Browse all past expenses and splits</p>
         </button>
       </div>
 
-      {/* Split Bill Modal */}
       {isSplitModalOpen && selectedExpense && (
         <SplitBillModal
           isOpen={isSplitModalOpen}
-          onClose={() => {
-            setIsSplitModalOpen(false);
-            setSelectedExpense(null);
-          }}
+          onClose={() => { setIsSplitModalOpen(false); setSelectedExpense(null); }}
           expense={selectedExpense}
-          onSuccess={() => {
-            /* 简单的重新拉数据，可按需调整 */
-            window.location.reload();
-          }}
+          onSuccess={() => window.location.reload()}
         />
       )}
     </main>
