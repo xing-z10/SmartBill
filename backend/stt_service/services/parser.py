@@ -1,16 +1,23 @@
-from openai import OpenAI
+import anthropic
 import json
 from typing import Optional
 from config import settings
 from models.schemas import Participant
 
+
 class ExpenseParserService:
-    
+
     def __init__(self):
-        self.client = None
-        if settings.OPENAI_API_KEY:
-            self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
-    
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            api_key = settings.ANTHROPIC_API_KEY
+            if api_key:
+                self._client = anthropic.Anthropic(api_key=api_key)
+        return self._client
+
     SYSTEM_PROMPT = """Extract expense information from the text. 
     Return JSON with format:
     {
@@ -20,103 +27,97 @@ class ExpenseParserService:
         ]
     }
     Normalize names to lowercase.
-    IMPORTANT: For "items", use the EXACT item names from the OCR list provided. Match the spoken items to the OCR items by meaning/similarity."""
-    
-    async def parse_expense(self, transcript: str, group_members: Optional[list] = None, ocr_items: Optional[list] = None, current_user_name: Optional[str] = None) -> list[Participant]:
-        """
-        Parse transcript to extract participants and their items using GPT
-        group_members: Optional list of participant names from selected group to help AI understand context
-        """
+    IMPORTANT: For "items", use the EXACT item names from the OCR list provided. Match the spoken items to the OCR items by meaning/similarity.
+    IMPORTANT: Return ONLY valid JSON. No markdown, no explanation, no code blocks."""
+
+    async def parse_expense(
+        self,
+        transcript: str,
+        group_members: Optional[list] = None,
+        ocr_items: Optional[list] = None,
+        current_user_name: Optional[str] = None
+    ) -> list[Participant]:
         if not self.client:
-            # If no OpenAI API key, return empty participants
-            print("Warning: OPENAI_API_KEY not set, returning empty participants")
+            print("Warning: ANTHROPIC_API_KEY not set, returning empty participants")
             return []
-        
+
         try:
-            # Build enhanced prompt
             system_prompt = self.SYSTEM_PROMPT
-            user_content = transcript
-            
-            # Add OCR items list to prompt if provided
+
             if ocr_items and len(ocr_items) > 0:
-                items_list = "\n".join([f"- {item.get('name', item) if isinstance(item, dict) else item}" for item in ocr_items])
-                system_prompt += f"\n\nAvailable items from receipt (use EXACT names from this list):\n{items_list}\n\nMatch the items mentioned in the transcript to the EXACT item names from the list above. Only use item names that exist in the list."
-            
-            # Add current user context (for "I" mapping)
+                items_list = "\n".join([
+                    f"- {item.get('name', item) if isinstance(item, dict) else item}"
+                    for item in ocr_items
+                ])
+                system_prompt += f"\n\nAvailable items from receipt (use EXACT names from this list):\n{items_list}\n\nOnly use item names that exist in the list."
+
             if current_user_name:
                 system_prompt += f"\n\nIMPORTANT: When the transcript mentions 'I', 'me', 'my', or 'myself', it refers to the current user: '{current_user_name}'. Map these references to '{current_user_name}' in the participants list."
-            
-            # Add group members context if provided
+
             if group_members and len(group_members) > 0:
                 members_list = ", ".join(group_members)
                 system_prompt += f"\n\nThe following people are part of this expense group: {members_list}. Use these names when extracting participants from the transcript."
-            
-            # Print prompt for debugging
-            print(f"=== GPT Prompt Debug ===")
-            print(f"System Prompt:\n{system_prompt}")
-            print(f"User Content: {user_content}")
+
+            user_content = f"Transcript: {transcript}\n\nReturn the JSON response now:"
+
+            print(f"=== Claude Prompt Debug ===")
             print(f"OCR Items: {ocr_items}")
             print(f"Group Members: {group_members}")
-            
-            # Add explicit JSON format instruction to prompt
-            system_prompt += "\n\nIMPORTANT: You must return ONLY valid JSON. Do not include any text, markdown formatting, or explanations before or after the JSON. The response must be parseable JSON only."
-            user_content_with_format = user_content + "\n\nReturn the JSON response now:"
-            
-            completion = self.client.chat.completions.create(
-                model=settings.GPT_MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": user_content_with_format
-                    }
-                ]
-                # Removed response_format - not all models support it, using prompt instruction instead
+
+            message = self.client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=1000,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_content}]
             )
-            
-            # Print raw response
-            raw_response = completion.choices[0].message.content
-            print(f"=== GPT Raw Response ===")
+
+            raw_response = message.content[0].text.strip()
+
+            if raw_response.startswith("```"):
+                raw_response = raw_response.split("```")[1]
+                if raw_response.startswith("json"):
+                    raw_response = raw_response[4:]
+                raw_response = raw_response.strip()
+
+            print(f"=== Claude Raw Response ===")
             print(f"Raw JSON: {raw_response}")
-            
+
             parsed_data = json.loads(raw_response)
-            print(f"=== Parsed Data ===")
-            print(f"Parsed: {parsed_data}")
-            
-            # Convert to Pydantic models
             participants_raw = parsed_data.get("participants", [])
-            print(f"=== Participants Raw ===")
-            print(f"Participants list: {participants_raw}")
-            print(f"Participants count: {len(participants_raw)}")
-            
+
+            # Merge duplicate participants
+            merged = {}
+            for p in participants_raw:
+                name = p.get("name", "").lower().strip()
+                items = p.get("items", [])
+                if name in merged:
+                    merged[name] = list(set(merged[name] + items))
+                else:
+                    merged[name] = items
+
             participants = []
-            for idx, participant in enumerate(participants_raw):
+            for name, items in merged.items():
                 try:
-                    participant_obj = Participant(**participant)
+                    participant_obj = Participant(name=name, items=items)
                     participants.append(participant_obj)
-                    print(f"Participant {idx}: {participant_obj.name} -> {participant_obj.items}")
+                    print(f"Participant: {name} -> {items}")
                 except Exception as e:
-                    print(f"Error creating Participant {idx}: {e}, data: {participant}")
-            
+                    print(f"Error creating Participant: {e}")
+
             print(f"=== Final Participants ===")
-            print(f"Total participants: {len(participants)}")
             for p in participants:
                 print(f"  - {p.name}: {p.items}")
-            
+
             return participants
+
         except json.JSONDecodeError as e:
             print(f"JSON Decode Error: {e}")
-            print(f"Raw response was: {completion.choices[0].message.content if 'completion' in locals() else 'N/A'}")
             return []
         except Exception as e:
             import traceback
             print(f"Error parsing expense: {e}")
             traceback.print_exc()
-            # Return empty list on error
             return []
 
-# Singleton instance
+
 expense_parser_service = ExpenseParserService()

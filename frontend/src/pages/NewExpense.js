@@ -20,6 +20,7 @@ const NewExpense = () => {
   const [ocrResult, setOcrResult] = useState(null);
   const [error, setError] = useState('');
   const [autoCalculate, setAutoCalculate] = useState(true);
+  const [manualTotal, setManualTotal] = useState('');
 
   /* ---------- Step 2 语音 ---------- */
   const [isRecording, setIsRecording] = useState(false);
@@ -43,8 +44,10 @@ const NewExpense = () => {
 
   /* ---------- 生命周期 ---------- */
   useEffect(() => {
-    loadContactGroups();
-    loadContacts();
+    if (authService.isAuthenticated()) {
+      loadContactGroups();
+      loadContacts();
+    }
   }, []);
 
   const loadContactGroups = async () => {
@@ -81,110 +84,66 @@ const NewExpense = () => {
     setError(null);
     try {
       const result = await ocrAPI.uploadReceipt(selectedFile);
-      setOcrResult(result);
-      setActiveStep(2); // → Voice Input
+      setOcrResult({
+        ...result,
+        total: result.total ?? (manualTotal ? parseFloat(manualTotal) : null),
+      });
+      setActiveStep(2);
     } catch (err) {
       setError(err.message || 'Failed to process receipt');
     } finally {
       setLoading(false);
     }
   };
-  const roundToTwo = (num) => {
-  return Math.round((num + Number.EPSILON) * 100) / 100;
-  };
 
-  // Recalculate subtotal and total based on items and fixed tax amount
+  const roundToTwo = (num) => Math.round((num + Number.EPSILON) * 100) / 100;
+
   const recalculateFinancials = useCallback((items, currentTaxAmount) => {
-  if (!items || items.length === 0) {
-    return {
-      subtotal: 0,
-      total: roundToTwo(parseFloat(currentTaxAmount) || 0),
-    };
-  }
+    if (!items || items.length === 0) {
+      return { subtotal: 0, total: roundToTwo(parseFloat(currentTaxAmount) || 0) };
+    }
+    const newSubtotal = items.reduce((sum, item) => {
+      const price = parseFloat(item.price) || 0;
+      const quantity = parseInt(item.quantity) || 1;
+      return roundToTwo(sum + price * quantity);
+    }, 0);
+    const taxAmount = parseFloat(currentTaxAmount) || 0;
+    return { subtotal: newSubtotal, total: roundToTwo(newSubtotal + taxAmount) };
+  }, []);
 
-  // calculate new subtotal
-  const newSubtotal = items.reduce((sum, item) => {
-    const price = parseFloat(item.price) || 0;
-    const quantity = parseInt(item.quantity) || 1;
-    return roundToTwo(sum + price * quantity);
-  }, 0);
+  const handleItemChange = (idx, field, val) => {
+    const items = [...ocrResult.items];
+    if (field === 'price') items[idx][field] = parseFloat(val) || 0;
+    else if (field === 'quantity') items[idx][field] = Math.max(1, parseInt(val, 10) || 1);
+    else items[idx][field] = val;
 
-  // Tax amount remains unchanged (from OCR or user manual modification)
-  const taxAmount = parseFloat(currentTaxAmount) || 0;
-
-  // Calculate new total: subtotal + tax amount
-  const newTotal = roundToTwo(newSubtotal + taxAmount);
-
-  return {
-    subtotal: newSubtotal,
-    total: newTotal,
-    // Tax amount is not returned here because it is fixed
+    if (autoCalculate) {
+      const financials = recalculateFinancials(items, ocrResult.tax_amount);
+      setOcrResult({ ...ocrResult, items, ...financials });
+    } else {
+      setOcrResult({ ...ocrResult, items });
+    }
   };
-}, []);
 
-// Handle item field changes
-const handleItemChange = (idx, field, val) => {
-  const items = [...ocrResult.items];
-  
-  if (field === 'price') {
-    items[idx][field] = parseFloat(val) || 0;
-  } else if (field === 'quantity') {
-    items[idx][field] = Math.max(1, parseInt(val, 10) || 1);
-  } else {
-    items[idx][field] = val;
-  }
+  const handleAddItem = () => {
+    const newItems = [...(ocrResult.items || []), { name: '', price: 0, quantity: 1 }];
+    if (autoCalculate) {
+      const financials = recalculateFinancials(newItems, ocrResult.tax_amount);
+      setOcrResult({ ...ocrResult, items: newItems, ...financials });
+    } else {
+      setOcrResult({ ...ocrResult, items: newItems });
+    }
+  };
 
-  // If autoCalculate is enabled, recalculate subtotal and total
-  if (autoCalculate) {
-    const financials = recalculateFinancials(items, ocrResult.tax_amount);
-    setOcrResult({
-      ...ocrResult,
-      items,
-      ...financials,
-      // tax_amount remains unchanged
-    });
-  } else {
-    setOcrResult({ ...ocrResult, items });
-  }
-};
-
-// Add new item
-const handleAddItem = () => {
-  const newItems = [...(ocrResult.items || []), { name: '', price: 0, quantity: 1 }];
-  
-  if (autoCalculate) {
-    const financials = recalculateFinancials(newItems, ocrResult.tax_amount);
-    setOcrResult({
-      ...ocrResult,
-      items: newItems,
-      ...financials,
-    });
-  } else {
-    setOcrResult({
-      ...ocrResult,
-      items: newItems,
-    });
-  }
-};
-
-// Remove item
-const handleRemoveItem = (idx) => {
-  const newItems = ocrResult.items.filter((_, i) => i !== idx);
-  
-  if (autoCalculate) {
-    const financials = recalculateFinancials(newItems, ocrResult.tax_amount);
-    setOcrResult({
-      ...ocrResult,
-      items: newItems,
-      ...financials,
-    });
-  } else {
-    setOcrResult({
-      ...ocrResult,
-      items: newItems,
-    });
-  }
-};
+  const handleRemoveItem = (idx) => {
+    const newItems = ocrResult.items.filter((_, i) => i !== idx);
+    if (autoCalculate) {
+      const financials = recalculateFinancials(newItems, ocrResult.tax_amount);
+      setOcrResult({ ...ocrResult, items: newItems, ...financials });
+    } else {
+      setOcrResult({ ...ocrResult, items: newItems });
+    }
+  };
 
   /* ---------- Step 2 语音 ---------- */
   const startRecording = async () => {
@@ -235,7 +194,7 @@ const handleRemoveItem = (idx) => {
       const result = await sttAPI.processVoice(audioFile, groupMembers, ocrItems, currentUserName);
       setTranscript(result.transcript || result);
       setSttResult(result);
-      setActiveStep(3); // → AI Analysis
+      setActiveStep(3);
       setTimeout(() => setAnalysisLoading(false), 1000);
     } catch (err) {
       setError(err.message || 'Failed to process voice');
@@ -245,28 +204,24 @@ const handleRemoveItem = (idx) => {
   };
 
   /* ---------- Step 4 分摊 ---------- */
-  // We need a new state to hold the expanded items (where qty > 1 are split)
   const [expandedItems, setExpandedItems] = useState([]);
-  
-  // Helper to expand items when entering Step 4
+
   const prepareStep4Data = useCallback(() => {
     if (!ocrResult?.items) return;
-    
     const expanded = [];
     ocrResult.items.forEach((item) => {
       const qty = parseInt(item.quantity) || 1;
       if (qty <= 1) {
-        expanded.push({ ...item, originalIndex: expanded.length }); // Use current length as unique ID for now
+        expanded.push({ ...item, originalIndex: expanded.length });
       } else {
-        // Split item
-        const unitPrice = item.price; // Parser now guarantees this is unit price
+        const unitPrice = item.price;
         for (let i = 0; i < qty; i++) {
           expanded.push({
             ...item,
             name: `${item.name} (${i + 1}/${qty})`,
             quantity: 1,
             price: unitPrice,
-            originalIndex: expanded.length
+            originalIndex: expanded.length,
           });
         }
       }
@@ -278,38 +233,15 @@ const handleRemoveItem = (idx) => {
   const addParticipant = (name, assignedIndices = null) => {
     if (!name) return;
     const key = name.toLowerCase().trim();
-    
-    // Prevent duplicates
-    if (participants.some(p => p.toLowerCase().trim() === key)) return;
-    
-    // Use current expandedItems state or the one passed if we are initializing
+    if (participants.some((p) => p.toLowerCase().trim() === key)) return;
     const targetItems = expandedItems.length > 0 ? expandedItems : (prepareStep4Data() || []);
-    
-    // Calculate indices. If assignedIndices is null, select ALL.
-    // Note: assignedIndices from STT will refer to ORIGINAL OCR items.
-    // We need to map them to EXPANDED items.
-    
-    let finalIndices = [];
-    
-    if (assignedIndices === null) {
-      // Manual add -> Select ALL expanded items
-      finalIndices = targetItems.map((_, idx) => idx);
-    } else {
-      // STT add -> map original indices to new expanded indices
-      // This is tricky because we don't have a direct map from STT.
-      // STT logic below uses name matching, so we should use that.
-      // Let's change STT logic to return expanded indices directly.
-      finalIndices = assignedIndices; 
-    }
-      
+    const finalIndices = assignedIndices === null ? targetItems.map((_, idx) => idx) : assignedIndices;
     setParticipants((prev) => [...prev, name]);
     setItemAssignments((prev) => ({ ...prev, [key]: finalIndices }));
   };
 
-  /* ----- FUSED LOGIC: STT + ME(YOU) MAPPING ----- */
   const initializeStep4Participants = useCallback(() => {
     if (participants.length > 0) return;
-
     const currentExpandedItems = prepareStep4Data();
     if (!currentExpandedItems) return;
 
@@ -317,12 +249,11 @@ const handleRemoveItem = (idx) => {
     const currentUserName = currentUser?.email ? currentUser.email.split('@')[0] : 'me';
     const currentUserEmail = currentUser?.email?.toLowerCase();
 
-    // Helper to add participant (to avoid duplicates locally)
     let initializedParticipants = [];
     const addParticipantLocal = (name, itemIndices) => {
-        if (initializedParticipants.includes(name)) return;
-        initializedParticipants.push(name);
-        addParticipant(name, itemIndices);
+      if (initializedParticipants.includes(name)) return;
+      initializedParticipants.push(name);
+      addParticipant(name, itemIndices);
     };
 
     let initialized = false;
@@ -332,23 +263,22 @@ const handleRemoveItem = (idx) => {
       const assignedItemIndices = new Set();
       const initialAssignments = {};
 
-      sttResult.participants.forEach(p => {
+      sttResult.participants.forEach((p) => {
         const name = p.name.trim();
         const key = name.toLowerCase().trim();
         const matchedIndices = [];
-        
         if (p.items && p.items.length > 0) {
-          p.items.forEach(sttItemName => {
+          p.items.forEach((sttItemName) => {
             currentExpandedItems.forEach((exItem, idx) => {
-               const baseName = exItem.name.replace(/\s\(\d+\/\d+\)$/, '');
-               if (
-                 baseName.toLowerCase() === sttItemName.toLowerCase() || 
-                 baseName.toLowerCase().includes(sttItemName.toLowerCase()) || 
-                 sttItemName.toLowerCase().includes(baseName.toLowerCase())
-               ) {
-                 matchedIndices.push(idx);
-                 assignedItemIndices.add(idx);
-               }
+              const baseName = exItem.name.replace(/\s\(\d+\/\d+\)$/, '');
+              if (
+                baseName.toLowerCase() === sttItemName.toLowerCase() ||
+                baseName.toLowerCase().includes(sttItemName.toLowerCase()) ||
+                sttItemName.toLowerCase().includes(baseName.toLowerCase())
+              ) {
+                matchedIndices.push(idx);
+                assignedItemIndices.add(idx);
+              }
             });
           });
         }
@@ -357,101 +287,100 @@ const handleRemoveItem = (idx) => {
 
       const unassignedIndices = currentExpandedItems
         .map((_, idx) => idx)
-        .filter(idx => !assignedItemIndices.has(idx));
+        .filter((idx) => !assignedItemIndices.has(idx));
 
-      sttResult.participants.forEach(p => {
+      sttResult.participants.forEach((p) => {
         const name = p.name.trim();
         const key = name.toLowerCase().trim();
-        
         let displayName = name;
         if (key === 'me' || key === currentUserName.toLowerCase() || (currentUserEmail && key === currentUserEmail)) {
-             displayName = 'me (You)';
+          displayName = 'me (You)';
         }
-
         const specificIndices = initialAssignments[key] || [];
-        const finalIndices = [...specificIndices, ...unassignedIndices];
-        const uniqueIndices = [...new Set(finalIndices)].sort((a, b) => a - b);
-        
-        addParticipantLocal(displayName, uniqueIndices);
+        const finalIndices = [...new Set([...specificIndices, ...unassignedIndices])].sort((a, b) => a - b);
+        addParticipantLocal(displayName, finalIndices);
       });
-      
-      const isMePresent = initializedParticipants.some(p => p === 'me (You)' || p.toLowerCase() === 'me');
-      if (!isMePresent) {
-        addParticipantLocal('me (You)', unassignedIndices);
+
+      const isMePresent = initializedParticipants.some((p) => p === 'me (You)' || p.toLowerCase() === 'me');
+      if (!isMePresent) addParticipantLocal('me (You)', unassignedIndices);
+
+      // Add group members not mentioned in STT
+      if (selectedGroupId) {
+        const group = contactGroups.find((g) => g.id === selectedGroupId);
+        if (group?.members) {
+          group.members.forEach((member) => {
+            const memberName = (member.contact_nickname || member.contact_email?.split('@')[0] || '').toLowerCase();
+            const memberEmail = member.contact_email?.toLowerCase();
+            const alreadyAdded = initializedParticipants.some(
+              (p) => p.toLowerCase() === memberName || p.toLowerCase() === memberEmail
+            );
+            if (!alreadyAdded && !member.is_creator) {
+              addParticipantLocal(memberName, unassignedIndices);
+            }
+          });
+        }
       }
-      
+
       initialized = true;
     }
-    
+
     // STRATEGY 2: Group Selection
     if (!initialized && selectedGroupId) {
-       const group = contactGroups.find((g) => g.id === selectedGroupId);
-       if (group?.members) {
-           const allIndices = currentExpandedItems.map((_, i) => i);
-           let foundCurrentUser = false;
-
-           group.members.forEach((member) => {
-               const memberEmail = member.contact_email?.toLowerCase();
-               const memberName = member.contact_nickname || member.contact_email.split('@')[0];
-               
-               if (memberEmail === currentUserEmail) {
-                   addParticipantLocal('me (You)', allIndices);
-                   foundCurrentUser = true;
-               } else {
-                   addParticipantLocal(memberName, allIndices);
-               }
-           });
-
-           if (!foundCurrentUser) {
-               addParticipantLocal('me (You)', allIndices);
-           }
-           initialized = true;
-       }
+      const group = contactGroups.find((g) => g.id === selectedGroupId);
+      if (group?.members) {
+        const allIndices = currentExpandedItems.map((_, i) => i);
+        let foundCurrentUser = false;
+        group.members.forEach((member) => {
+          const memberEmail = member.contact_email?.toLowerCase();
+          const memberName = member.contact_nickname || member.contact_email.split('@')[0];
+          if (memberEmail === currentUserEmail) {
+            addParticipantLocal('me (You)', allIndices);
+            foundCurrentUser = true;
+          } else {
+            addParticipantLocal(memberName, allIndices);
+          }
+        });
+        if (!foundCurrentUser) addParticipantLocal('me (You)', allIndices);
+        initialized = true;
+      }
     }
 
     // STRATEGY 3: Fallback
     if (!initialized) {
-        const allIndices = currentExpandedItems.map((_, i) => i);
-        addParticipantLocal('me (You)', allIndices);
+      const allIndices = currentExpandedItems.map((_, i) => i);
+      addParticipantLocal('me (You)', allIndices);
     }
-    
   }, [selectedGroupId, contactGroups, sttResult, ocrResult, participants.length]);
 
   useEffect(() => {
     if (activeStep === 4 && !step4Initialized) {
       initializeStep4Participants();
       setStep4Initialized(true);
-    } else if (activeStep !== 4) {
-        if (activeStep < 3) {
-             setStep4Initialized(false);
-             setParticipants([]);
-             setItemAssignments({});
-             setExpandedItems([]);
-        }
+    } else if (activeStep !== 4 && activeStep < 3) {
+      setStep4Initialized(false);
+      setParticipants([]);
+      setItemAssignments({});
+      setExpandedItems([]);
     }
   }, [activeStep, step4Initialized, initializeStep4Participants]);
 
   /* ---------- Step 5 保存 ---------- */
   const handleComplete = async () => {
+    if (!authService.isAuthenticated()) {
+      navigate('/login');
+      return;
+    }
     if (!ocrResult) return setError('No receipt data to save');
     setLoading(true);
     setError(null);
     try {
-      // Use expandedItems for final submission if available
       const finalItems = expandedItems.length > 0 ? expandedItems : (ocrResult.items || []);
-      
       const participantsData = participants.map((name) => {
         const key = name.toLowerCase().trim();
         const indices = itemAssignments[key] || [];
-        // Map indices to items from the expanded list
         const items = indices.map((i) => finalItems[i]).filter(Boolean);
         return { name, items: items.map((it) => it.name) };
       });
-      
-      // When saving, we should save the simplified/collapsed items list to the DB
-      // but with participants mapped correctly.
-      // However, for splitting accuracy, saving the expanded items as the official items list is better.
-      
       await expenseAPI.createExpense({
         store_name: ocrResult.store_name || null,
         total_amount: ocrResult.total || 0,
@@ -460,14 +389,9 @@ const handleRemoveItem = (idx) => {
         tax_rate: ocrResult.tax_rate || null,
         raw_text: ocrResult.raw_text || null,
         transcript: transcript || null,
-        items: finalItems.map((it) => ({ 
-            name: it.name, 
-            price: it.price, 
-            quantity: 1 // Always 1 for expanded items
-        })),
+        items: finalItems.map((it) => ({ name: it.name, price: it.price, quantity: 1 })),
         participants: participantsData,
       });
-      // 成功后跳转到 dashboard
       window.location.href = '/dashboard';
     } catch (err) {
       setError(err.message || 'Failed to save expense');
@@ -483,10 +407,8 @@ const handleRemoveItem = (idx) => {
 
   /* ---------- 每人应付金额计算 ---------- */
   const perPersonTotal = React.useMemo(() => {
-    // Use expanded items if available
     const itemsToUse = expandedItems.length > 0 ? expandedItems : (ocrResult?.items || []);
     if (!itemsToUse || itemsToUse.length === 0) return {};
-    
     const res = {};
     participants.forEach((p) => {
       const key = p.toLowerCase().trim();
@@ -495,10 +417,7 @@ const handleRemoveItem = (idx) => {
       indices.forEach((itemIdx) => {
         const item = itemsToUse[itemIdx];
         if (!item) return;
-        const shareCount = participants.filter((pp) => {
-          const ppKey = pp.toLowerCase().trim();
-          return itemAssignments[ppKey]?.includes(itemIdx);
-        }).length;
+        const shareCount = participants.filter((pp) => itemAssignments[pp.toLowerCase().trim()]?.includes(itemIdx)).length;
         if (shareCount) sum += (item.price || 0) / shareCount;
       });
       res[p] = sum.toFixed(2);
@@ -506,26 +425,46 @@ const handleRemoveItem = (idx) => {
     return res;
   }, [participants, itemAssignments, ocrResult, expandedItems]);
 
-
-
   /* ************************************************ */
-  /* UI 渲染                      */
+  /* UI 渲染                                           */
   /* ************************************************ */
   return (
     <div className="max-w-7xl mx-auto px-16">
+      {/* 未登录时显示顶部登录入口 */}
+      {!authService.isAuthenticated() && (
+        <div className="flex justify-between items-center py-4 mb-2 border-b border-gray-200">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+              <span className="text-white font-bold">$</span>
+            </div>
+            <span className="font-bold text-gray-900">SmartBill</span>
+          </div>
+          <button
+            onClick={() => navigate('/login')}
+            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition"
+          >
+            Log in
+          </button>
+        </div>
+      )}
       <PageHeader
         title="Create New Expense"
         subtitle="Upload a bill and use voice to describe the split"
       />
       <StepIndicator steps={STEPS} activeStep={activeStep} />
 
-      {/* Step 1  Upload Bill */}
+      {/* Step 1 — Upload Bill */}
       {activeStep === 1 && (
         <>
-          <UploadArea onFileSelect={handleFileSelect} selectedFile={selectedFile} />
+          <UploadArea
+            onFileSelect={handleFileSelect}
+            selectedFile={selectedFile}
+            manualTotal={manualTotal}
+            onManualTotalChange={setManualTotal}
+          />
           {contactGroups.length > 0 && (
             <div className="mt-8 p-6 bg-white rounded-xl border border-gray-200">
-              <h4 className="text-lg font-semibold mb-2"> Select Friend Group (Optional)</h4>
+              <h4 className="text-lg font-semibold mb-2">Select Friend Group (Optional)</h4>
               <p className="text-sm text-gray-500 mb-4">Help AI better understand the bill split</p>
               <select
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -541,215 +480,187 @@ const handleRemoveItem = (idx) => {
               </select>
             </div>
           )}
-          {selectedFile && (
-            <div className="mt-8 text-center">
-              <button
-                className="inline-flex items-center gap-2 px-8 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 hover:-translate-y-0.5 hover:shadow-lg transition"
-                onClick={handleProcessReceipt}
-                disabled={loading}
-              >
-                {loading ? 'Processing...' : 'Process Receipt'}
-              </button>
+          {(selectedFile || manualTotal) && (
+            <div className="mt-8 flex items-center justify-center gap-4">
+              {selectedFile && (
+                <button
+                  className="inline-flex items-center gap-2 px-8 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 hover:-translate-y-0.5 hover:shadow-lg transition"
+                  onClick={handleProcessReceipt}
+                  disabled={loading}
+                >
+                  {loading ? 'Processing...' : 'Process Receipt'}
+                </button>
+              )}
+              {manualTotal && (
+                <button
+                  className="inline-flex items-center gap-2 px-8 py-4 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 hover:-translate-y-0.5 hover:shadow-lg transition"
+                  onClick={() => {
+                    setOcrResult({
+                      store_name: null,
+                      total: parseFloat(manualTotal),
+                      subtotal: null,
+                      tax_amount: null,
+                      tax_rate: null,
+                      items: [],
+                      raw_text: null,
+                    });
+                    setActiveStep(2);
+                  }}
+                >
+                  Skip OCR → Next Step
+                </button>
+              )}
             </div>
           )}
         </>
       )}
 
-  {/* Step 2  Voice Input */}
-  {activeStep === 2 && (
-  <div className="mt-8 space-y-8">
-    {/* Receipt Details Section */}
-    {ocrResult && (
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        {/* Explanation Card */}
-        <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200">
-          <div>
-            <h3 className="text-xl font-semibold flex items-center gap-2">
-              📝 Receipt Details (Editable)
-            </h3>
-            <p className="text-sm text-gray-500 mt-1">
-              {autoCalculate 
-                ? '✓ Auto-calculating: Subtotal & Total update when you edit items' 
-                : '✗ Manual mode: Edit all fields freely'}
-            </p>
-          </div>
-          
-          {/* Calculate Switch */}
-          <label className="flex items-center gap-3 cursor-pointer bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 hover:border-blue-400 transition">
-            <span className="text-sm font-medium text-gray-700">Auto Calculate</span>
-            <div className="relative">
-              <input
-                type="checkbox"
-                checked={autoCalculate}
-                onChange={(e) => setAutoCalculate(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-focus:ring-4 peer-focus:ring-blue-300 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </div>
-          </label>
-        </div>
+      {/* Step 2 — Voice Input */}
+      {activeStep === 2 && (
+        <div className="mt-8 space-y-8">
+          {ocrResult && (
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200">
+                <div>
+                  <h3 className="text-xl font-semibold flex items-center gap-2">📝 Receipt Details (Editable)</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {autoCalculate
+                      ? '✓ Auto-calculating: Subtotal & Total update when you edit items'
+                      : '✗ Manual mode: Edit all fields freely'}
+                  </p>
+                </div>
+                <label className="flex items-center gap-3 cursor-pointer bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 hover:border-blue-400 transition">
+                  <span className="text-sm font-medium text-gray-700">Auto Calculate</span>
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      checked={autoCalculate}
+                      onChange={(e) => setAutoCalculate(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-focus:ring-4 peer-focus:ring-blue-300 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  </div>
+                </label>
+              </div>
 
-
-        {/* Basic Information Form */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Store Name */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Store Name
-            </label>
-            <input
-              type="text"
-              value={ocrResult.store_name || ''}
-              onChange={(e) => setOcrResult({ ...ocrResult, store_name: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {/* Total Amount */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Total Amount
-              {autoCalculate && (
-                <span className="text-xs text-green-600 ml-2"> Auto-calculated</span>
-              )}
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={ocrResult.total || ''}
-              onChange={(e) => setOcrResult({ ...ocrResult, total: parseFloat(e.target.value) || 0 })}
-              disabled={autoCalculate}
-              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                autoCalculate 
-                  ? 'bg-green-50 border-green-300 cursor-not-allowed text-green-900 font-semibold' 
-                  : 'border-gray-300'
-              }`}
-            />
-          </div>
-
-          {/* Subtotal */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Subtotal (before tax)
-              {autoCalculate && (
-                <span className="text-xs text-green-600 ml-2"> Auto-calculated</span>
-              )}
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={ocrResult.subtotal || ''}
-              onChange={(e) => setOcrResult({ ...ocrResult, subtotal: parseFloat(e.target.value) || null })}
-              disabled={autoCalculate}
-              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                autoCalculate 
-                  ? 'bg-green-50 border-green-300 cursor-not-allowed text-green-900 font-semibold' 
-                  : 'border-gray-300'
-              }`}
-            />
-          </div>
-
-          {/* Tax Amount */}
-          {ocrResult.tax_amount !== null && ocrResult.tax_amount !== undefined && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Tax Amount
-                <span className="text-xs text-amber-600 ml-2"></span>
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={ocrResult.tax_amount}
-                onChange={(e) => {
-                  const newTaxAmount = parseFloat(e.target.value) || 0;
-                  if (autoCalculate) {
-                    const newTotal = (ocrResult.subtotal || 0) + newTaxAmount;
-                    setOcrResult({ 
-                      ...ocrResult, 
-                      tax_amount: newTaxAmount,
-                      total: newTotal
-                    });
-                  } else {
-                    setOcrResult({ ...ocrResult, tax_amount: newTaxAmount });
-                  }
-                }}
-                className="w-full px-3 py-2 border border-amber-300 bg-amber-50 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 text-amber-900"
-              />
-              <p className="mt-1 text-xs text-amber-600">
-                This value comes from your receipt. Edit only if OCR misread it.
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Items Section */}
-        {ocrResult.items && ocrResult.items.length > 0 && (
-          <div className="mt-6">
-            <h4 className="text-sm font-semibold text-gray-700 mb-3">
-              Items ({ocrResult.items.length})
-              {autoCalculate && (
-                <span className="text-xs text-green-600 ml-2 font-normal">
-                  Changes will auto-update Subtotal & Total
-                </span>
-              )}
-            </h4>
-            <div className="space-y-3">
-              {ocrResult.items.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                  {/* Item Name */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Store Name</label>
                   <input
                     type="text"
-                    value={item.name || ''}
-                    onChange={(e) => handleItemChange(idx, 'name', e.target.value)}
-                    placeholder="Item name"
-                    className="flex-2 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={ocrResult.store_name || ''}
+                    onChange={(e) => setOcrResult({ ...ocrResult, store_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                  
-                  {/* Item Price */}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Total Amount
+                    {autoCalculate && <span className="text-xs text-green-600 ml-2">Auto-calculated</span>}
+                  </label>
                   <input
                     type="number"
                     step="0.01"
-                    value={item.price || ''}
-                    onChange={(e) => handleItemChange(idx, 'price', e.target.value)}
-                    placeholder="Price"
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={ocrResult.total || ''}
+                    onChange={(e) => setOcrResult({ ...ocrResult, total: parseFloat(e.target.value) || 0 })}
+                    disabled={autoCalculate}
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      autoCalculate ? 'bg-green-50 border-green-300 cursor-not-allowed text-green-900 font-semibold' : 'border-gray-300'
+                    }`}
                   />
-                  
-                  {/* Item Quantity */}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Subtotal (before tax)
+                    {autoCalculate && <span className="text-xs text-green-600 ml-2">Auto-calculated</span>}
+                  </label>
                   <input
                     type="number"
-                    min="1"
-                    value={item.quantity || 1}
-                    onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)}
-                    placeholder="Qty"
-                    className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    step="0.01"
+                    value={ocrResult.subtotal || ''}
+                    onChange={(e) => setOcrResult({ ...ocrResult, subtotal: parseFloat(e.target.value) || null })}
+                    disabled={autoCalculate}
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      autoCalculate ? 'bg-green-50 border-green-300 cursor-not-allowed text-green-900 font-semibold' : 'border-gray-300'
+                    }`}
                   />
-                  
-                  {/* Delete Button */}
+                </div>
+                {ocrResult.tax_amount !== null && ocrResult.tax_amount !== undefined && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tax Amount</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={ocrResult.tax_amount}
+                      onChange={(e) => {
+                        const newTaxAmount = parseFloat(e.target.value) || 0;
+                        if (autoCalculate) {
+                          setOcrResult({ ...ocrResult, tax_amount: newTaxAmount, total: (ocrResult.subtotal || 0) + newTaxAmount });
+                        } else {
+                          setOcrResult({ ...ocrResult, tax_amount: newTaxAmount });
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-amber-300 bg-amber-50 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 text-amber-900"
+                    />
+                    <p className="mt-1 text-xs text-amber-600">This value comes from your receipt. Edit only if OCR misread it.</p>
+                  </div>
+                )}
+              </div>
+
+              {ocrResult.items && ocrResult.items.length > 0 && (
+                <div className="mt-6">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3">
+                    Items ({ocrResult.items.length})
+                    {autoCalculate && <span className="text-xs text-green-600 ml-2 font-normal">Changes will auto-update Subtotal & Total</span>}
+                  </h4>
+                  <div className="space-y-3">
+                    {ocrResult.items.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                        <input
+                          type="text"
+                          value={item.name || ''}
+                          onChange={(e) => handleItemChange(idx, 'name', e.target.value)}
+                          placeholder="Item name"
+                          className="flex-2 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={item.price || ''}
+                          onChange={(e) => handleItemChange(idx, 'price', e.target.value)}
+                          placeholder="Price"
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.quantity || 1}
+                          onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)}
+                          placeholder="Qty"
+                          className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button
+                          className="w-8 h-8 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center"
+                          onClick={() => handleRemoveItem(idx)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                   <button
-                    className="w-8 h-8 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center"
-                    onClick={() => handleRemoveItem(idx)}
+                    className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+                    onClick={handleAddItem}
                   >
-                    ×
+                    + Add Item
                   </button>
                 </div>
-              ))}
+              )}
             </div>
-            
-            {/* Add Item Button */}
-            <button
-              className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
-              onClick={handleAddItem}
-            >
-              + Add Item
-            </button>
-          </div>
-        )}
-        </div>
-    )}
+          )}
 
           <div className="mt-8 bg-white rounded-xl border border-gray-200 p-6 text-center">
-            <h3 className="text-xl font-semibold mb-2"> Voice Input</h3>
+            <h3 className="text-xl font-semibold mb-2">Voice Input</h3>
             <p className="text-gray-500 mb-6">Describe how to split this bill (optional)</p>
             <div className="flex items-center justify-center gap-4">
               {!isRecording ? (
@@ -757,16 +668,14 @@ const handleRemoveItem = (idx) => {
                   className="inline-flex items-center gap-2 px-8 py-4 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 hover:-translate-y-0.5 transition"
                   onClick={startRecording}
                 >
-                  <Mic size={24} />
-                  Start Recording
+                  <Mic size={24} /> Start Recording
                 </button>
               ) : (
                 <button
                   className="inline-flex items-center gap-2 px-8 py-4 bg-red-600 text-white rounded-lg hover:bg-red-700 hover:-translate-y-0.5 transition"
                   onClick={stopRecording}
                 >
-                  <MicOff size={24} />
-                  Stop Recording
+                  <MicOff size={24} /> Stop Recording
                 </button>
               )}
             </div>
@@ -782,13 +691,9 @@ const handleRemoveItem = (idx) => {
               </div>
             )}
             <div className="mt-6 flex items-center justify-center gap-3">
-              <button
-                onClick={goBack}
-                className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
+              <button onClick={goBack} className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
                 ← Back
               </button>
-
               <button
                 className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 onClick={handleProcessVoice}
@@ -801,15 +706,14 @@ const handleRemoveItem = (idx) => {
         </div>
       )}
 
-      {/* Step 3  AI Analysis */}
+      {/* Step 3 — AI Analysis */}
       {activeStep === 3 && (
         <div className="mt-8 bg-white rounded-xl border border-gray-200 p-8">
-          <h3 className="text-2xl font-bold text-center mb-6"> AI Analysis Summary</h3>
+          <h3 className="text-2xl font-bold text-center mb-6">AI Analysis Summary</h3>
           {analysisLoading ? (
             <div className="text-center py-16 text-gray-500">Processing expense split...</div>
           ) : (
             <>
-              {/* OCR Summary */}
               {ocrResult && (
                 <div className="mb-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
                   <h4 className="text-lg font-semibold mb-4">Receipt Summary</h4>
@@ -822,8 +726,6 @@ const handleRemoveItem = (idx) => {
                   </div>
                 </div>
               )}
-
-              {/* Voice Summary */}
               {transcript && (
                 <div className="mb-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
                   <h4 className="text-lg font-semibold mb-4">Voice Instructions</h4>
@@ -842,16 +744,10 @@ const handleRemoveItem = (idx) => {
                   )}
                 </div>
               )}
-
-              {/* Continue */}
               <div className="text-center flex items-center justify-center gap-3">
-                <button
-                  onClick={goBack}
-                  className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
+                <button onClick={goBack} className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
                   ← Back
                 </button>
-
                 <button
                   className="inline-flex items-center gap-2 px-8 py-4 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
                   onClick={() => setActiveStep(4)}
@@ -865,17 +761,16 @@ const handleRemoveItem = (idx) => {
         </div>
       )}
 
-      {/* Step 4  Bill Split */}
+      {/* Step 4 — Bill Split */}
       {activeStep === 4 && (
         <div className="mt-8 space-y-8">
           <div>
-            <h3 className="text-2xl font-bold mb-2"> Bill Split</h3>
-            <p className="text-gray-500 mb-8">Select participants and assign items to each person. Items are initially unassigned unless detected from voice input.</p>
+            <h3 className="text-2xl font-bold mb-2">Bill Split</h3>
+            <p className="text-gray-500 mb-8">Select participants and assign items to each person.</p>
 
-            {/* 群组快速添加（可选） */}
             {!selectedGroupId && !sttResult?.participants && contactGroups.length > 0 && (
               <div className="p-6 bg-white rounded-xl border border-gray-200">
-                <h4 className="text-lg font-semibold mb-2"> Select Friend Group (Optional)</h4>
+                <h4 className="text-lg font-semibold mb-2">Select Friend Group (Optional)</h4>
                 <p className="text-sm text-gray-500 mb-4">Quickly add all members from a group</p>
                 <select
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -885,7 +780,7 @@ const handleRemoveItem = (idx) => {
                       const group = contactGroups.find((g) => g.id === e.target.value);
                       if (group?.members) {
                         const names = group.members.map((m) => m.contact_nickname || m.contact_email.split('@')[0]);
-                        names.forEach(addParticipant);   // 逐人添加并默认全选
+                        names.forEach(addParticipant);
                         setSelectedGroupId(e.target.value);
                       }
                     }
@@ -901,7 +796,6 @@ const handleRemoveItem = (idx) => {
               </div>
             )}
 
-            {/* 手动添加参与者 */}
             <div className="flex items-center gap-3 p-4 bg-gray-50 border border-gray-200 rounded-lg">
               <input
                 type="text"
@@ -926,45 +820,38 @@ const handleRemoveItem = (idx) => {
               </button>
             </div>
 
-            {/* 已添加的参与者卡片 */}
             {participants.length > 0 && (
               <div className="space-y-4">
                 <h4 className="text-lg font-semibold">Participants ({participants.length})</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {participants.map((participant, pIdx) => (
-                    <div key={pIdx} className="bg-white border border-gray-200 rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-200">
-                        <h5 className="font-semibold text-gray-900">{participant}</h5>
-                        <button
-                          className="w-8 h-8 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center"
-                          onClick={() => {
-                            const newParticipants = participants.filter((_, i) => i !== pIdx);
-                            setParticipants(newParticipants);
-                            const newAssignments = { ...itemAssignments };
-                            const key = participant.toLowerCase().trim();
-                            delete newAssignments[key];
-                            setItemAssignments(newAssignments);
-                          }}
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <div className="space-y-2">
-                        <strong className="text-sm text-gray-700">Assigned Items:</strong>
-                        {(() => {
-                          const key = participant.toLowerCase().trim();
-                          const indices = itemAssignments[key] || [];
-                          const itemsToUse = expandedItems.length > 0 ? expandedItems : (ocrResult?.items || []);
-                          
-                          return indices.length > 0 ? (
+                  {participants.map((participant, pIdx) => {
+                    const key = participant.toLowerCase().trim();
+                    const indices = itemAssignments[key] || [];
+                    const itemsToUse = expandedItems.length > 0 ? expandedItems : (ocrResult?.items || []);
+                    return (
+                      <div key={pIdx} className="bg-white border border-gray-200 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-200">
+                          <h5 className="font-semibold text-gray-900">{participant}</h5>
+                          <button
+                            className="w-8 h-8 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center"
+                            onClick={() => {
+                              setParticipants(participants.filter((_, i) => i !== pIdx));
+                              const newAssignments = { ...itemAssignments };
+                              delete newAssignments[key];
+                              setItemAssignments(newAssignments);
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          <strong className="text-sm text-gray-700">Assigned Items:</strong>
+                          {indices.length > 0 ? (
                             <ul className="space-y-1">
                               {indices.map((itemIdx) => {
                                 const item = itemsToUse[itemIdx];
                                 if (!item) return null;
-                                const shareCount = participants.filter((pp) => {
-                                  const ppKey = pp.toLowerCase().trim();
-                                  return itemAssignments[ppKey]?.includes(itemIdx);
-                                }).length;
+                                const shareCount = participants.filter((pp) => itemAssignments[pp.toLowerCase().trim()]?.includes(itemIdx)).length;
                                 const amountPerPerson = shareCount > 0 ? (item.price || 0) / shareCount : 0;
                                 return (
                                   <li key={itemIdx} className="text-sm text-gray-700">
@@ -976,44 +863,33 @@ const handleRemoveItem = (idx) => {
                             </ul>
                           ) : (
                             <p className="text-sm text-gray-500">No items assigned</p>
-                          );
-                        })()}
-                        {(() => {
-                          const key = participant.toLowerCase().trim();
-                          const indices = itemAssignments[key] || [];
-                          const itemsToUse = expandedItems.length > 0 ? expandedItems : (ocrResult?.items || []);
-                          
-                          return indices.length > 0 && (
+                          )}
+                          {indices.length > 0 && (
                             <div className="pt-2 border-t border-gray-200 text-sm">
-                              <strong>Total: ${(indices.reduce((sum, itemIdx) => {
-                                const item = itemsToUse[itemIdx];
-                                if (!item) return sum;
-                                const shareCount = participants.filter((pp) => {
-                                  const ppKey = pp.toLowerCase().trim();
-                                  return itemAssignments[ppKey]?.includes(itemIdx);
-                                }).length;
-                                return sum + (shareCount > 0 ? (item.price || 0) / shareCount : 0);
-                              }, 0)).toFixed(2)}</strong>
+                              <strong>
+                                Total: ${indices.reduce((sum, itemIdx) => {
+                                  const item = itemsToUse[itemIdx];
+                                  if (!item) return sum;
+                                  const shareCount = participants.filter((pp) => itemAssignments[pp.toLowerCase().trim()]?.includes(itemIdx)).length;
+                                  return sum + (shareCount > 0 ? (item.price || 0) / shareCount : 0);
+                                }, 0).toFixed(2)}
+                              </strong>
                             </div>
-                          );
-                        })()}
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
 
-            {/* 商品分配区域 */}
-            {expandedItems.length > 0 ? (
+            {expandedItems.length > 0 && (
               <div className="space-y-4">
                 <h4 className="text-lg font-semibold">Items ({expandedItems.length})</h4>
                 <div className="space-y-4">
                   {expandedItems.map((item, itemIdx) => {
-                    const assignedTo = participants.filter((p) => {
-                      const pKey = p.toLowerCase().trim();
-                      return itemAssignments[pKey] && itemAssignments[pKey].includes(itemIdx);
-                    });
+                    const assignedTo = participants.filter((p) => itemAssignments[p.toLowerCase().trim()]?.includes(itemIdx));
                     const shareCount = assignedTo.length;
                     const amountPerPerson = shareCount > 0 ? (item.price || 0) / shareCount : 0;
                     return (
@@ -1047,7 +923,8 @@ const handleRemoveItem = (idx) => {
                                         const newAssignments = { ...itemAssignments };
                                         if (!newAssignments[pKey]) newAssignments[pKey] = [];
                                         if (e.target.checked) {
-                                          if (!newAssignments[pKey].includes(itemIdx)) newAssignments[pKey] = [...newAssignments[pKey], itemIdx];
+                                          if (!newAssignments[pKey].includes(itemIdx))
+                                            newAssignments[pKey] = [...newAssignments[pKey], itemIdx];
                                         } else {
                                           newAssignments[pKey] = newAssignments[pKey].filter((idx) => idx !== itemIdx);
                                         }
@@ -1069,17 +946,12 @@ const handleRemoveItem = (idx) => {
                   })}
                 </div>
               </div>
-            ) : null}
+            )}
 
-            {/* 下一步 */}
             <div className="text-center flex items-center justify-center gap-3">
-              <button
-                onClick={goBack}
-                className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
+              <button onClick={goBack} className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
                 ← Back
               </button>
-
               <button
                 className="inline-flex items-center gap-2 px-8 py-4 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
                 onClick={() => setActiveStep(5)}
@@ -1092,13 +964,11 @@ const handleRemoveItem = (idx) => {
         </div>
       )}
 
-      {/* Step 5  Bill Summary */}
+      {/* Step 5 — Bill Summary */}
       {activeStep === 5 && (
         <div className="mt-8 space-y-8">
           <div className="bg-white rounded-xl border border-gray-200 p-8">
-            <h3 className="text-2xl font-bold text-center mb-6"> Bill Summary</h3>
-
-            {/* Expense Details */}
+            <h3 className="text-2xl font-bold text-center mb-6">Bill Summary</h3>
             <div className="mb-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
               <h4 className="text-lg font-semibold mb-4">Expense Details</h4>
               <div className="space-y-3">
@@ -1109,8 +979,6 @@ const handleRemoveItem = (idx) => {
                 {ocrResult?.items?.length > 0 && <div className="flex justify-between"><span className="text-gray-600">Items:</span><span className="font-medium">{ocrResult.items.length} items</span></div>}
               </div>
             </div>
-
-            {/* Per-person Share */}
             <div className="mb-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
               <h4 className="text-lg font-semibold mb-4">Per-person Share</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1123,21 +991,23 @@ const handleRemoveItem = (idx) => {
               </div>
             </div>
 
-            {/* Actions */}
+            {/* 未登录提示 */}
+            {!authService.isAuthenticated() && (
+              <div className="mb-6 px-4 py-3 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg text-center">
+                You need to <button onClick={() => navigate('/login')} className="underline font-semibold">log in</button> to save this expense.
+              </div>
+            )}
+
             <div className="text-center flex items-center justify-center gap-3">
-              <button
-                onClick={goBack}
-                className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
+              <button onClick={goBack} className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
                 ← Back
               </button>
-
               <button
                 className="inline-flex items-center gap-2 px-8 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
                 onClick={handleComplete}
                 disabled={loading}
               >
-                {loading ? 'Saving...' : 'Confirm & Save'}
+                {loading ? 'Saving...' : authService.isAuthenticated() ? 'Confirm & Save' : 'Log in to Save'}
               </button>
             </div>
           </div>

@@ -431,13 +431,14 @@ export const contactGroupsAPI = {
   /**
    * Create a new contact group
    */
-  createContactGroup: async (name, description = null, contactIds = []) => {
+  createContactGroup: async (name, description = null, contactIds = [], freeMembers = []) => {
     return apiRequest('/api/contact-groups', {
       method: 'POST',
       body: JSON.stringify({
         name,
         description,
         contact_ids: contactIds,
+        free_members: freeMembers,
       }),
     });
   },
@@ -445,13 +446,14 @@ export const contactGroupsAPI = {
   /**
    * Update a contact group
    */
-  updateContactGroup: async (groupId, name = null, description = null, contactIds = null) => {
+  updateContactGroup: async (groupId, name = null, description = null, contactIds = null, freeMembers = []) => {
     return apiRequest(`/api/contact-groups/${groupId}`, {
       method: 'PUT',
       body: JSON.stringify({
         name,
         description,
         contact_ids: contactIds,
+        free_members: freeMembers,
       }),
     });
   },

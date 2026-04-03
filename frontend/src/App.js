@@ -25,12 +25,9 @@ function App() {
 
   useEffect(() => {
     const checkAuth = () => setIsAuthenticated(authService.isAuthenticated());
-    checkAuth(); // 首次检查
-
-    // 多窗口同步：监听 storage 事件 + 定时器兜底
+    checkAuth();
     window.addEventListener('storage', checkAuth);
     const interval = setInterval(checkAuth, 5000);
-
     return () => {
       window.removeEventListener('storage', checkAuth);
       clearInterval(interval);
@@ -45,73 +42,28 @@ function App() {
           <div className="w-64 flex-shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
             <Sidebar />
           </div>
-
           <div className="flex-1 overflow-y-auto">
             <Routes>
-              {/* 登录/注册页重定向到默认页 */}
               <Route path="/login" element={<Navigate to="/new-expense" replace />} />
               <Route path="/register" element={<Navigate to="/new-expense" replace />} />
               <Route path="/" element={<Navigate to="/new-expense" replace />} />
-
-              {/* 受保护页面 */}
-              <Route
-                path="/dashboard"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/new-expense"
-                element={
-                  <ProtectedRoute>
-                    <NewExpense />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/participants"
-                element={
-                  <ProtectedRoute>
-                    <Participants />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/history"
-                element={
-                  <ProtectedRoute>
-                    <History />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/settings"
-                element={
-                  <ProtectedRoute>
-                    <Settings />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/expense/:id"
-                element={
-                  <ProtectedRoute>
-                    <ExpenseDetail />
-                  </ProtectedRoute>
-                }
-              />
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/new-expense" element={<ProtectedRoute><NewExpense /></ProtectedRoute>} />
+              <Route path="/participants" element={<ProtectedRoute><Participants /></ProtectedRoute>} />
+              <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+              <Route path="/expense/:id" element={<ProtectedRoute><ExpenseDetail /></ProtectedRoute>} />
             </Routes>
           </div>
         </div>
       ) : (
-        /* 未登录：仅展示登录/注册页，其余路径全部跳 /login */
+        /* 未登录：/new-expense 直接展示，其余跳登录 */
         <div className="min-h-screen bg-gray-50">
           <Routes>
+            <Route path="/new-expense" element={<NewExpense />} />
             <Route path="/login" element={<Login onLogin={() => setIsAuthenticated(true)} />} />
             <Route path="/register" element={<Register onRegister={() => setIsAuthenticated(true)} />} />
-            <Route path="*" element={<Navigate to="/login" replace />} />
+            <Route path="*" element={<Navigate to="/new-expense" replace />} />
           </Routes>
         </div>
       )}

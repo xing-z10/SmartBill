@@ -4,7 +4,7 @@ Authentication Service - Email registration and login
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import init_db
+from database import init_db, close_db
 from routers import auth, expenses, contacts, splits
 
 app = FastAPI(title="SmartBill Auth Service", version="1.0.0")
@@ -22,7 +22,13 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """Initialize database on startup"""
-    init_db()
+    await init_db()  # 改为 await
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database on shutdown"""
+    await close_db()  # 新增
 
 
 @app.get("/health")

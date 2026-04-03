@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Users as UsersIcon, Mail, UserPlus, Trash2, Loader, FolderPlus, Edit2, X, Check
+  Users as UsersIcon, Mail, UserPlus, Trash2, Loader, FolderPlus, Edit2, X, Check, Plus
 } from 'lucide-react';
 import { contactsAPI, contactGroupsAPI } from '../services/api';
 import authService from '../services/authService';
@@ -29,6 +29,10 @@ const Participants = () => {
   const [selectedContactIds, setSelectedContactIds] = useState([]);
   const [savingGroup, setSavingGroup] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+
+  // Free-input members (name only, not linked to contacts)
+  const [freeMembers, setFreeMembers] = useState([]);
+  const [freeMemberInput, setFreeMemberInput] = useState('');
 
   useEffect(() => {
     const user = authService.getCurrentUser();
@@ -121,7 +125,26 @@ const Participants = () => {
         ?.filter((m) => m.contact_id !== null && m.contact_id !== undefined)
         .map((m) => m.contact_id) || []
     );
+    // Load free members from group (members without contact_id)
+    setFreeMembers(
+      group?.members
+        ?.filter((m) => !m.contact_id && !m.is_creator)
+        .map((m) => m.contact_nickname || m.contact_email?.split('@')[0] || '') || []
+    );
+    setFreeMemberInput('');
     setIsGroupModalOpen(true);
+  };
+
+  const handleAddFreeMember = () => {
+    const name = freeMemberInput.trim();
+    if (!name) return;
+    if (freeMembers.includes(name)) return;
+    setFreeMembers((prev) => [...prev, name]);
+    setFreeMemberInput('');
+  };
+
+  const handleRemoveFreeMember = (name) => {
+    setFreeMembers((prev) => prev.filter((m) => m !== name));
   };
 
   const handleSaveGroup = async () => {
@@ -129,10 +152,23 @@ const Participants = () => {
     setSavingGroup(true);
     setError('');
     try {
+      // Combine contact IDs and free member names into one payload
+      // Free members are sent as { name } objects, backend stores as nickname
+      const payload = {
+        name: groupName,
+        description: groupDescription || null,
+        contact_ids: selectedContactIds,
+        free_members: freeMembers, // new field
+      };
+
       if (editingGroup) {
-        await contactGroupsAPI.updateContactGroup(editingGroup.id, groupName, groupDescription || null, selectedContactIds);
+        await contactGroupsAPI.updateContactGroup(
+          editingGroup.id, groupName, groupDescription || null, selectedContactIds, freeMembers
+        );
       } else {
-        await contactGroupsAPI.createContactGroup(groupName, groupDescription || null, selectedContactIds);
+        await contactGroupsAPI.createContactGroup(
+          groupName, groupDescription || null, selectedContactIds, freeMembers
+        );
       }
       await loadGroups();
       setIsGroupModalOpen(false);
@@ -156,9 +192,7 @@ const Participants = () => {
 
   const toggleContactSelection = (contactId) => {
     setSelectedContactIds((prev) =>
-      prev.includes(contactId)
-        ? prev.filter((id) => id !== contactId)
-        : [...prev, contactId]
+      prev.includes(contactId) ? prev.filter((id) => id !== contactId) : [...prev, contactId]
     );
   };
 
@@ -167,6 +201,8 @@ const Participants = () => {
     setGroupName('');
     setGroupDescription('');
     setSelectedContactIds([]);
+    setFreeMembers([]);
+    setFreeMemberInput('');
   };
 
   const getDisplayName = (contact) => contact.nickname || contact.friend_email.split('@')[0];
@@ -176,8 +212,7 @@ const Participants = () => {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3">
-            <UsersIcon size={32} />
-            My Contacts & Groups
+            <UsersIcon size={32} /> My Contacts & Groups
           </h1>
           <p className="text-base text-gray-500">Manage your contacts and organize them into groups</p>
         </div>
@@ -197,9 +232,7 @@ const Participants = () => {
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`flex items-center gap-2 px-5 py-3 border-b-2 text-sm font-medium transition ${
-              activeTab === tab
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-600 hover:text-gray-900'
+              activeTab === tab ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-600 hover:text-gray-900'
             }`}
           >
             {tab === 'contacts' ? <UsersIcon size={18} /> : <FolderPlus size={18} />}
@@ -317,30 +350,24 @@ const Participants = () => {
                     </div>
                     {currentUser && group.user_id && String(currentUser.id || currentUser.user_id) === String(group.user_id) ? (
                       <div className="flex gap-2">
-                        <button className="p-2 text-gray-500 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => handleOpenGroupModal(group)} title="Edit group">
+                        <button className="p-2 text-gray-500 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => handleOpenGroupModal(group)}>
                           <Edit2 size={16} />
                         </button>
-                        <button className="p-2 text-gray-500 hover:bg-red-100 hover:text-red-600 rounded-md" onClick={() => handleDeleteGroup(group.id, group.name)} title="Delete group">
+                        <button className="p-2 text-gray-500 hover:bg-red-100 hover:text-red-600 rounded-md" onClick={() => handleDeleteGroup(group.id, group.name)}>
                           <Trash2 size={16} />
                         </button>
                       </div>
                     ) : (
-                      <div>
-                        <span className="text-xs text-gray-500 italic">Shared Group</span>
-                      </div>
+                      <span className="text-xs text-gray-500 italic">Shared Group</span>
                     )}
                   </div>
-                  <div>
-                    {group.members.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {group.members.map((member, idx) => (
-                          <div key={idx} className={`px-3 py-1.5 rounded-full text-sm ${member.is_creator ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-700'}`}>
-                            {member.contact_nickname || member.contact_email.split('@')[0]}
-                            {member.is_creator && <span className="text-xs opacity-75 ml-1">(Creator)</span>}
-                          </div>
-                        ))}
+                  <div className="flex flex-wrap gap-2">
+                    {group.members.length > 0 ? group.members.map((member, idx) => (
+                      <div key={idx} className={`px-3 py-1.5 rounded-full text-sm ${member.is_creator ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-700'}`}>
+                        {member.contact_nickname || member.contact_email?.split('@')[0]}
+                        {member.is_creator && <span className="text-xs opacity-75 ml-1">(You)</span>}
                       </div>
-                    ) : (
+                    )) : (
                       <p className="text-sm text-gray-400 italic">No members in this group</p>
                     )}
                   </div>
@@ -399,15 +426,17 @@ const Participants = () => {
 
       {/* Group Modal */}
       {isGroupModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setIsGroupModalOpen(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-[90%] max-w-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => { setIsGroupModalOpen(false); resetGroupForm(); }}>
+          <div className="bg-white rounded-xl shadow-xl w-[90%] max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <h2 className="text-xl font-bold">{editingGroup ? 'Edit Group' : 'Create New Group'}</h2>
-              <button className="text-gray-400 hover:bg-gray-100 rounded-lg p-1" onClick={() => setIsGroupModalOpen(false)}>
+              <button className="text-gray-400 hover:bg-gray-100 rounded-lg p-1" onClick={() => { setIsGroupModalOpen(false); resetGroupForm(); }}>
                 <X size={20} />
               </button>
             </div>
-            <div className="p-6 space-y-4">
+
+            <div className="p-6 space-y-5">
+              {/* Group Name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Group Name *</label>
                 <input
@@ -415,29 +444,69 @@ const Participants = () => {
                   placeholder="e.g., Friends, Family, Colleagues"
                   value={groupName}
                   onChange={(e) => setGroupName(e.target.value)}
-                  required
                   autoFocus
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+
+              {/* Description */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
                 <textarea
                   placeholder="Describe this group..."
                   value={groupDescription}
                   onChange={(e) => setGroupDescription(e.target.value)}
-                  rows={3}
+                  rows={2}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+
+              {/* Free-input members */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Select Contacts</label>
-                {contacts.length === 0 ? (
-                  <p className="text-sm text-gray-500">No contacts available. Add contacts first.</p>
-                ) : (
-                  <div className="max-h-72 overflow-y-auto bg-gray-50 border border-gray-200 rounded-md p-3 space-y-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Add Members by Name
+                  <span className="text-xs text-gray-400 font-normal ml-2">— no account needed</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="e.g., Alice, Bob..."
+                    value={freeMemberInput}
+                    onChange={(e) => setFreeMemberInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddFreeMember(); } }}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    onClick={handleAddFreeMember}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-1"
+                  >
+                    <Plus size={16} /> Add
+                  </button>
+                </div>
+                {freeMembers.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {freeMembers.map((name) => (
+                      <span key={name} className="flex items-center gap-1 px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-sm">
+                        {name}
+                        <button onClick={() => handleRemoveFreeMember(name)} className="hover:text-red-500">
+                          <X size={14} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Select from existing contacts */}
+              {contacts.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Add from Contacts
+                    <span className="text-xs text-gray-400 font-normal ml-2">— optional</span>
+                  </label>
+                  <div className="max-h-48 overflow-y-auto bg-gray-50 border border-gray-200 rounded-lg p-2 space-y-1">
                     {contacts.map((contact) => (
-                      <label key={contact.id} className="flex items-center gap-3 p-3 bg-white rounded-md cursor-pointer hover:bg-gray-100">
+                      <label key={contact.id} className="flex items-center gap-3 p-2 bg-white rounded-md cursor-pointer hover:bg-gray-100">
                         <input
                           type="checkbox"
                           checked={selectedContactIds.includes(contact.id)}
@@ -445,17 +514,25 @@ const Participants = () => {
                           className="w-4 h-4 text-blue-600"
                         />
                         <span className="font-medium text-gray-900">{contact.nickname || contact.friend_email.split('@')[0]}</span>
-                        <span className="text-sm text-gray-500 ml-auto">{contact.friend_email}</span>
+                        <span className="text-sm text-gray-400 ml-auto">{contact.friend_email}</span>
                       </label>
                     ))}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
+
               {error && <div className="px-3 py-2 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg">{error}</div>}
             </div>
+
             <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200">
-              <button className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50" onClick={resetGroupForm}>Cancel</button>
-              <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" onClick={handleSaveGroup} disabled={savingGroup || !groupName.trim()}>
+              <button className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50" onClick={() => { setIsGroupModalOpen(false); resetGroupForm(); }}>
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                onClick={handleSaveGroup}
+                disabled={savingGroup || !groupName.trim()}
+              >
                 {savingGroup ? 'Saving...' : editingGroup ? 'Update Group' : 'Create Group'}
               </button>
             </div>

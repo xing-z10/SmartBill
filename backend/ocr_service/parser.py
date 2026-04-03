@@ -230,7 +230,8 @@ class ReceiptParser:
         # Debug: log the parsing range
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"Parsing range: start_idx={start_idx}, end_idx={end_idx}, total_lines={len(text.split('\n'))}")
+        all_lines = text.split('\n')
+        logger.debug(f"Parsing range: start_idx={start_idx}, end_idx={end_idx}, total_lines={len(all_lines)}")
         logger.debug(f"Lines to parse ({len(lines)}): {lines[:5]}...")
         
         i = 0

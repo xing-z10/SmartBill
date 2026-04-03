@@ -1,38 +1,44 @@
 """
-Database connection and session management
+Database connection and session management (MongoDB with Beanie)
 """
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import NullPool
+from motor.motor_asyncio import AsyncIOMotorClient
+from beanie import init_beanie
 import os
 from dotenv import load_dotenv
 
 # Load from project root .env file
 project_root = os.path.join(os.path.dirname(__file__), '..', '..', '..')
 env_path = os.path.join(project_root, '.env')
-load_dotenv(env_path)  # Load from project root
-load_dotenv()  # Also try current directory (for backward compatibility)
+load_dotenv(env_path)
+load_dotenv()
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://kongyingyi@localhost:5432/smartbill"
-)
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+MONGODB_DB = os.getenv("MONGODB_DB", "smartbill")
 
-engine = create_engine(DATABASE_URL, poolclass=NullPool)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+client: AsyncIOMotorClient = None
 
 
-def get_db() -> Session:
-    """Dependency for getting database session"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def init_db():
+    """Initialize MongoDB connection and Beanie ODM"""
+    global client
+    from models import (
+        User, EmailVerificationCode, PasswordResetCode,
+        Expense, ExpenseItem, ExpenseParticipant, ExpenseSplit,
+        Contact, ContactGroup, ContactGroupMember
+    )
+    client = AsyncIOMotorClient(MONGODB_URL)
+    await init_beanie(
+        database=client[MONGODB_DB],
+        document_models=[
+            User, EmailVerificationCode, PasswordResetCode,
+            Expense, ExpenseItem, ExpenseParticipant, ExpenseSplit,
+            Contact, ContactGroup, ContactGroupMember
+        ]
+    )
 
 
-def init_db():
-    """Initialize database tables"""
-    from models import Base
-    Base.metadata.create_all(bind=engine)
-
+async def close_db():
+    """Close MongoDB connection"""
+    global client
+    if client:
+        client.close()

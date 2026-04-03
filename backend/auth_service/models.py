@@ -1,173 +1,137 @@
 """
-Database models for authentication service
+Database models for authentication service (MongoDB with Beanie)
 """
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
+from beanie import Document, Link
+from pydantic import EmailStr, Field
+from typing import Optional, List
+from datetime import datetime
 import uuid
 
-Base = declarative_base()
+
+class User(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    email: EmailStr
+    password_hash: str
+    email_verified: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None
+
+    class Settings:
+        name = "users"
 
 
-from sqlalchemy.orm import relationship
+class EmailVerificationCode(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    email: str
+    code: str
+    expires_at: datetime
+    used: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String(255), unique=True, nullable=False, index=True)
-    password_hash = Column(String(255), nullable=False)
-    email_verified = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Relationships
-    expenses = relationship("Expense", back_populates="user", cascade="all, delete-orphan")
-    contacts = relationship("Contact", foreign_keys="[Contact.user_id]", back_populates="user", cascade="all, delete-orphan")
-    contact_groups = relationship("ContactGroup", back_populates="user", cascade="all, delete-orphan")
+    class Settings:
+        name = "email_verification_codes"
 
 
-class EmailVerificationCode(Base):
-    __tablename__ = "email_verification_codes"
+class PasswordResetCode(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    email: str
+    code: str
+    expires_at: datetime
+    used: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String(255), nullable=False, index=True)
-    code = Column(String(6), nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-
-class PasswordResetCode(Base):
-    __tablename__ = "password_reset_codes"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String(255), nullable=False, index=True)
-    code = Column(String(6), nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    class Settings:
+        name = "password_reset_codes"
 
 
-class Expense(Base):
-    __tablename__ = "expenses"
+class ExpenseItem(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    expense_id: uuid.UUID
+    name: str
+    price: float
+    quantity: float = 1.0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    store_name = Column(String(255))
-    total_amount = Column(Numeric(10, 2), nullable=False)
-    subtotal = Column(Numeric(10, 2))
-    tax_amount = Column(Numeric(10, 2))
-    tax_rate = Column(Numeric(5, 4))
-    raw_text = Column(String, nullable=True)  # OCR raw text
-    transcript = Column(String, nullable=True)  # Voice transcript
-    receipt_image_url = Column(String, nullable=True)  # Optional: image storage URL
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Relationships
-    user = relationship("User", back_populates="expenses")
-    items = relationship("ExpenseItem", back_populates="expense", cascade="all, delete-orphan")
-    participants = relationship("ExpenseParticipant", back_populates="expense", cascade="all, delete-orphan")
-    splits = relationship("ExpenseSplit", back_populates="expense", cascade="all, delete-orphan")
+    class Settings:
+        name = "expense_items"
 
 
-class ExpenseItem(Base):
-    __tablename__ = "expense_items"
+class ExpenseParticipant(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    expense_id: uuid.UUID
+    name: str
+    items: Optional[str] = None  # JSON string
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    expense_id = Column(UUID(as_uuid=True), ForeignKey("expenses.id", ondelete="CASCADE"), nullable=False, index=True)
-    name = Column(String(255), nullable=False)
-    price = Column(Numeric(10, 2), nullable=False)
-    quantity = Column(Numeric(10, 2), default=1, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    expense = relationship("Expense", back_populates="items")
+    class Settings:
+        name = "expense_participants"
 
 
-class ExpenseParticipant(Base):
-    __tablename__ = "expense_participants"
+class ExpenseSplit(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    expense_id: uuid.UUID
+    participant_name: str
+    participant_email: Optional[str] = None
+    contact_id: Optional[uuid.UUID] = None
+    amount_owed: float
+    items_detail: Optional[str] = None  # JSON string
+    is_paid: bool = False
+    email_sent: bool = False
+    email_sent_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    expense_id = Column(UUID(as_uuid=True), ForeignKey("expenses.id", ondelete="CASCADE"), nullable=False, index=True)
-    name = Column(String(255), nullable=False)
-    items = Column(String, nullable=True)  # JSON string of items
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    expense = relationship("Expense", back_populates="participants")
-
-class Contact(Base):
-    """User's contact list (friends who are registered users)"""
-    __tablename__ = "contacts"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    friend_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    nickname = Column(String(255), nullable=True)  # Optional nickname/note
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    user = relationship("User", foreign_keys=[user_id], back_populates="contacts")
-    friend_user = relationship("User", foreign_keys=[friend_user_id])
+    class Settings:
+        name = "expense_splits"
 
 
-class ContactGroup(Base):
-    """Groups for organizing contacts"""
-    __tablename__ = "contact_groups"
+class Expense(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    user_id: uuid.UUID
+    store_name: Optional[str] = None
+    total_amount: float
+    subtotal: Optional[float] = None
+    tax_amount: Optional[float] = None
+    tax_rate: Optional[float] = None
+    raw_text: Optional[str] = None
+    transcript: Optional[str] = None
+    receipt_image_url: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    name = Column(String(255), nullable=False)
-    description = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Relationships
-    user = relationship("User", back_populates="contact_groups")
-    members = relationship("ContactGroupMember", back_populates="group", cascade="all, delete-orphan")
-
-
-class ContactGroupMember(Base):
-    """Many-to-many relationship between contacts and groups"""
-    __tablename__ = "contact_group_members"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    group_id = Column(UUID(as_uuid=True), ForeignKey("contact_groups.id", ondelete="CASCADE"), nullable=False, index=True)
-    contact_id = Column(UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False, index=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    # Ensure a contact can only be in a group once per group
-    __table_args__ = (
-        UniqueConstraint('group_id', 'contact_id', name='_contact_group_uc'),
-    )
-
-    # Relationships
-    group = relationship("ContactGroup", back_populates="members")
-    contact = relationship("Contact")
+    class Settings:
+        name = "expenses"
 
 
-class ExpenseSplit(Base):
-    """Detailed expense split information for each participant"""
-    __tablename__ = "expense_splits"
+class Contact(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    user_id: uuid.UUID
+    friend_user_id: uuid.UUID
+    nickname: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    expense_id = Column(UUID(as_uuid=True), ForeignKey("expenses.id", ondelete="CASCADE"), nullable=False, index=True)
-    participant_name = Column(String(255), nullable=False)
-    participant_email = Column(String(255), nullable=True)
-    contact_id = Column(UUID(as_uuid=True), ForeignKey("contacts.id"), nullable=True, index=True)  # Link to contact if registered
-    amount_owed = Column(Numeric(10, 2), nullable=False)  # How much this person owes
-    items_detail = Column(String, nullable=True)  # JSON string of items this person is paying for
-    is_paid = Column(Boolean, default=False, nullable=False)
-    email_sent = Column(Boolean, default=False, nullable=False)
-    email_sent_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    class Settings:
+        name = "contacts"
 
-    # Relationships
-    expense = relationship("Expense", back_populates="splits")
-    contact = relationship("Contact")
 
+class ContactGroup(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    user_id: uuid.UUID
+    name: str
+    description: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None
+
+    class Settings:
+        name = "contact_groups"
+
+
+class ContactGroupMember(Document):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    group_id: uuid.UUID
+    contact_id: Optional[uuid.UUID] = None       # None for free members
+    free_member_name: Optional[str] = None        # Name-only members (no account needed)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "contact_group_members"

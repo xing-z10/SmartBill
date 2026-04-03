@@ -125,7 +125,7 @@ python -m uvicorn main:app --reload --port 5001
 
 ### Frontend Setup
 ```bash
-cd smartbill-app
+cd frontend
 npm install
 
 # Create .env file (optional)
