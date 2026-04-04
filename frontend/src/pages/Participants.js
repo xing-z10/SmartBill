@@ -41,8 +41,9 @@ const Participants = () => {
   }, []);
 
   useEffect(() => {
-    activeTab === 'contacts' ? loadContacts() : loadGroups();
-  }, [activeTab]);
+    loadContacts();
+    loadGroups();
+  }, []);
 
   const loadContacts = async () => {
     setLoading(true);
