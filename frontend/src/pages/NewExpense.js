@@ -186,8 +186,8 @@ const NewExpense = () => {
 
   const handleProcessVoice = async () => {
     if (!audioBlob) {
-      setActiveStep(3);
-      setTimeout(() => setAnalysisLoading(false), 500);
+      setStep4Initialized(false);
+      setActiveStep(4);
       return;
     }
     setSttLoading(true);
@@ -976,69 +976,20 @@ const NewExpense = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {participants.map((participant, pIdx) => {
                     const key = participant.toLowerCase().trim();
-                    const indices = itemAssignments[key] || [];
-                    const itemsToUse = expandedItems.length > 0 ? expandedItems : (ocrResult?.items || []);
                     return (
-                      <div key={pIdx} className="bg-white border border-gray-200 rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-200">
-                          <h5 className="font-semibold text-gray-900">{participant}</h5>
-                          <button
-                            className="w-8 h-8 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center"
-                            onClick={() => {
-                              setParticipants(participants.filter((_, i) => i !== pIdx));
-                              const newAssignments = { ...itemAssignments };
-                              delete newAssignments[key];
-                              setItemAssignments(newAssignments);
-                            }}
-                          >
-                            ×
-                          </button>
-                        </div>
-                        <div className="space-y-2">
-                          <strong className="text-sm text-gray-700">Assigned Items:</strong>
-                          {indices.length > 0 ? (
-                            <ul className="space-y-1">
-                              {indices.map((itemIdx) => {
-                                const item = itemsToUse[itemIdx];
-                                if (!item) return null;
-                                const shareCount = participants.filter((pp) =>
-                                  itemAssignments[pp.toLowerCase().trim()]?.includes(itemIdx)
-                                ).length;
-                                const amountPerPerson =
-                                  shareCount > 0 ? (item.price || 0) / shareCount : 0;
-                                return (
-                                  <li key={itemIdx} className="text-sm text-gray-700">
-                                    {item.name} - ${amountPerPerson.toFixed(2)}
-                                    {shareCount > 1 && (
-                                      <span className="text-xs text-blue-600 ml-1">
-                                        (shared with {shareCount})
-                                      </span>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          ) : (
-                            <p className="text-sm text-gray-500">No items assigned</p>
-                          )}
-                          {indices.length > 0 && (
-                            <div className="pt-2 border-t border-gray-200 text-sm">
-                              <strong>
-                                Total: $
-                                {indices
-                                  .reduce((sum, itemIdx) => {
-                                    const item = itemsToUse[itemIdx];
-                                    if (!item) return sum;
-                                    const shareCount = participants.filter((pp) =>
-                                      itemAssignments[pp.toLowerCase().trim()]?.includes(itemIdx)
-                                    ).length;
-                                    return sum + (shareCount > 0 ? (item.price || 0) / shareCount : 0);
-                                  }, 0)
-                                  .toFixed(2)}
-                              </strong>
-                            </div>
-                          )}
-                        </div>
+                      <div key={pIdx} className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between">
+                        <h5 className="font-semibold text-gray-900">{participant}</h5>
+                        <button
+                          className="w-8 h-8 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center"
+                          onClick={() => {
+                            setParticipants(participants.filter((_, i) => i !== pIdx));
+                            const newAssignments = { ...itemAssignments };
+                            delete newAssignments[key];
+                            setItemAssignments(newAssignments);
+                          }}
+                        >
+                          ×
+                        </button>
                       </div>
                     );
                   })}
