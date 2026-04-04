@@ -488,32 +488,10 @@ const NewExpense = () => {
           <UploadArea
             onFileSelect={handleFileSelect}
             selectedFile={selectedFile}
+            onRemoveFile={handleRemoveFile}
             manualTotal={manualTotal}
             onManualTotalChange={setManualTotal}
           />
-
-          {/* 已选文件预览 + 删除 */}
-          {selectedFile && (
-            <div className="mt-4 flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <img
-                src={URL.createObjectURL(selectedFile)}
-                alt="preview"
-                className="w-14 h-14 object-cover rounded-lg border border-blue-200 flex-shrink-0"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-blue-800 truncate">{selectedFile.name}</p>
-                <p className="text-xs text-blue-500">{(selectedFile.size / 1024).toFixed(1)} KB</p>
-              </div>
-              <button
-                onClick={handleRemoveFile}
-                className="w-8 h-8 flex items-center justify-center rounded-full bg-red-100 text-red-500 hover:bg-red-200 hover:text-red-700 transition flex-shrink-0 text-lg leading-none"
-                title="Remove file"
-              >
-                ×
-              </button>
-            </div>
-          )}
 
           {contactGroups.length > 0 && (
             <div className="mt-8 p-6 bg-white rounded-xl border border-gray-200">
