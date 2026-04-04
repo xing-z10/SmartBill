@@ -2,10 +2,25 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Edit, Save, X, Trash2 } from 'lucide-react';
 import { expenseAPI } from '../services/api';
+import authService from '../services/authService';
 
 const toNum = (v) => {
   const n = Number(v);
   return Number.isNaN(n) ? 0 : n;
+};
+
+// Normalize participants for the current viewer
+const normalizeParticipants = (participants, currentUserEmail) => {
+  if (!participants || !currentUserEmail) return participants || [];
+  return participants.map((p) => {
+    if (p.email && p.email.toLowerCase() === currentUserEmail.toLowerCase()) {
+      return { ...p, name: 'me (You)' };
+    }
+    if ((p.name === 'me (You)' || p.name === 'me') && p.email && p.email.toLowerCase() !== currentUserEmail.toLowerCase()) {
+      return { ...p, name: p.email.split('@')[0] };
+    }
+    return p;
+  });
 };
 
 const ExpenseDetail = () => {
@@ -18,6 +33,7 @@ const ExpenseDetail = () => {
   const [editing, setEditing]             = useState(false);
   const [saving, setSaving]               = useState(false);
   const [error, setError]                 = useState(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState(null);
 
   const [splitAssignments, setSplitAssignments] = useState({});
   const [newParticipantName, setNewParticipantName] = useState('');
@@ -26,11 +42,25 @@ const ExpenseDetail = () => {
     (async () => {
       setLoading(true);
       try {
+        const user = authService.getCurrentUser();
+        const email = user?.email || null;
+        setCurrentUserEmail(email);
+
         const res = await expenseAPI.getExpenses(100, 0);
-        const found = res.expenses?.find((e) => String(e.id) === String(id));
+        let found = res.expenses?.find((e) => String(e.id) === String(id));
+
+        if (!found) {
+          const sharedRes = await expenseAPI.getSharedExpenses(100, 0);
+          found = sharedRes.expenses?.find((e) => String(e.id) === String(id));
+        }
+
         if (!found) throw new Error('Expense not found');
+
+        found = { ...found, participants: normalizeParticipants(found.participants, email) };
+
         setExpense(found);
         setEditedExpense({ ...found });
+
         const assignments = {};
         found.items?.forEach((item) => {
           assignments[item.name] = found.participants
@@ -137,7 +167,7 @@ const ExpenseDetail = () => {
       setExpense(updated);
       setEditedExpense(updated);
       setEditing(false);
-      alert('Expense updated locally! (Full API save pending)');
+      alert('Expense updated locally!');
     } catch (e) {
       setError(e.message || 'Save failed');
     } finally {
@@ -185,7 +215,9 @@ const ExpenseDetail = () => {
   if (error && !expense) return (
     <div className="max-w-5xl mx-auto px-6 py-12 text-center">
       <p className="text-red-600 mb-4">{error}</p>
-      <button onClick={() => navigate('/dashboard')} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"><ArrowLeft size={16} /> Back to Dashboard</button>
+      <button onClick={() => navigate('/dashboard')} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+        <ArrowLeft size={16} /> Back to Dashboard
+      </button>
     </div>
   );
 
@@ -196,7 +228,9 @@ const ExpenseDetail = () => {
     <div className="max-w-5xl mx-auto px-6 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <button onClick={() => navigate('/dashboard')} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"><ArrowLeft size={16} /> Back</button>
+        <button onClick={() => navigate('/dashboard')} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+          <ArrowLeft size={16} /> Back
+        </button>
         <div className="flex items-center gap-3">
           {!editing ? (
             <>
@@ -206,7 +240,9 @@ const ExpenseDetail = () => {
           ) : (
             <>
               <button onClick={handleCancel} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"><X size={16} /> Cancel</button>
-              <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60"><Save size={16} /> {saving ? 'Saving...' : 'Save'}</button>
+              <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60">
+                <Save size={16} /> {saving ? 'Saving...' : 'Save'}
+              </button>
             </>
           )}
         </div>
@@ -221,17 +257,43 @@ const ExpenseDetail = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Store Name</label>
-              {editing ? <input value={display.store_name || ''} onChange={(e) => setEditedExpense({ ...editedExpense, store_name: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /> : <div className="text-gray-900">{display.store_name || 'N/A'}</div>}
+              {editing
+                ? <input value={display.store_name || ''} onChange={(e) => setEditedExpense({ ...editedExpense, store_name: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                : <div className="text-gray-900">{display.store_name || 'N/A'}</div>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount</label>
-              {editing ? <input type="number" step="0.01" value={display.total_amount || ''} onChange={(e) => setEditedExpense({ ...editedExpense, total_amount: toNum(e.target.value) })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /> : <div className="text-gray-900 font-semibold">${fmt(display.total_amount)}</div>}
+              {editing
+                ? <input type="number" step="0.01" value={display.total_amount || ''} onChange={(e) => setEditedExpense({ ...editedExpense, total_amount: toNum(e.target.value) })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                : <div className="text-gray-900 font-semibold">${fmt(display.total_amount)}</div>}
             </div>
-            {display.subtotal != null && <div><label className="block text-sm font-medium text-gray-700 mb-1">Subtotal</label>{editing ? <input type="number" step="0.01" value={display.subtotal || ''} onChange={(e) => setEditedExpense({ ...editedExpense, subtotal: toNum(e.target.value) })} className="w-full px-3 py-2 border border-gray-300 rounded-lg" /> : <div className="text-gray-900">${fmt(display.subtotal)}</div>}</div>}
-            {display.tax_amount != null && <div><label className="block text-sm font-medium text-gray-700 mb-1">Tax Amount</label>{editing ? <input type="number" step="0.01" value={display.tax_amount || ''} onChange={(e) => setEditedExpense({ ...editedExpense, tax_amount: toNum(e.target.value) })} className="w-full px-3 py-2 border border-gray-300 rounded-lg" /> : <div className="text-gray-900">${fmt(display.tax_amount)}</div>}</div>}
-            <div><label className="block text-sm font-medium text-gray-700 mb-1">Created At</label><div className="text-gray-900">{new Date(display.created_at).toLocaleString()}</div></div>
+            {display.subtotal != null && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Subtotal</label>
+                {editing
+                  ? <input type="number" step="0.01" value={display.subtotal || ''} onChange={(e) => setEditedExpense({ ...editedExpense, subtotal: toNum(e.target.value) })} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+                  : <div className="text-gray-900">${fmt(display.subtotal)}</div>}
+              </div>
+            )}
+            {display.tax_amount != null && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tax Amount</label>
+                {editing
+                  ? <input type="number" step="0.01" value={display.tax_amount || ''} onChange={(e) => setEditedExpense({ ...editedExpense, tax_amount: toNum(e.target.value) })} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+                  : <div className="text-gray-900">${fmt(display.tax_amount)}</div>}
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Created At</label>
+              <div className="text-gray-900">{new Date(display.created_at).toLocaleString()}</div>
+            </div>
           </div>
-          {display.transcript && <div className="mt-4"><label className="block text-sm font-medium text-gray-700 mb-1">Voice Transcript</label><div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-600 italic">{display.transcript}</div></div>}
+          {display.transcript && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Voice Transcript</label>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-600 italic">{display.transcript}</div>
+            </div>
+          )}
         </section>
 
         {/* Items */}
@@ -246,7 +308,7 @@ const ExpenseDetail = () => {
                 <div key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                   {editing ? (
                     <div className="flex items-center gap-3">
-                      <input value={item.name} onChange={(e) => handleItemChange(idx, 'name', e.target.value)} placeholder="Item name" className="flex-2 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input value={item.name} onChange={(e) => handleItemChange(idx, 'name', e.target.value)} placeholder="Item name" className="flex-2 px-3 py-2 border border-gray-300 rounded-lg" />
                       <input type="number" step="0.01" value={item.price} onChange={(e) => handleItemChange(idx, 'price', e.target.value)} placeholder="Price" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg" />
                       <input type="number" min="1" value={item.quantity} onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)} placeholder="Qty" className="w-20 px-3 py-2 border border-gray-300 rounded-lg" />
                       <button onClick={() => handleRemoveItem(idx)} className="w-8 h-8 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center">×</button>
@@ -258,7 +320,9 @@ const ExpenseDetail = () => {
                         {itemParticipants[item.name]?.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1">
                             {itemParticipants[item.name].map((name) => (
-                              <span key={name} className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">{name}</span>
+                              <span key={name} className={`px-2 py-0.5 text-xs rounded-full ${name === 'me (You)' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                                {name}
+                              </span>
                             ))}
                           </div>
                         )}
@@ -338,7 +402,7 @@ const ExpenseDetail = () => {
             <h2 className="text-xl font-bold text-gray-900 mb-4">Participants ({display.participants.length})</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {display.participants.map((p, i) => (
-                <div key={i} className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                <div key={i} className={`flex items-center justify-between p-4 rounded-lg border ${p.name === 'me (You)' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
                   <div className="font-semibold text-gray-900">{p.name}</div>
                   <div className="text-lg font-bold text-emerald-600">${toNum(participantAmounts[p.name]).toFixed(2)}</div>
                 </div>

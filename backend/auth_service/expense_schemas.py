@@ -16,6 +16,7 @@ class ExpenseItemSchema(BaseModel):
 
 class ExpenseParticipantSchema(BaseModel):
     name: str
+    email: Optional[str] = None  # 新增：用于跨账号身份对齐
     items: Optional[List[str]] = []
 
 
@@ -52,4 +53,3 @@ class ExpenseResponse(BaseModel):
 class ExpenseListResponse(BaseModel):
     expenses: List[ExpenseResponse]
     total: int
-

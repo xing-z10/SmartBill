@@ -4,6 +4,7 @@ import {
   Receipt, DollarSign, Users, TrendingUp, Plus, FileText, Trash2, Share2, Eye
 } from 'lucide-react';
 import { expenseAPI } from '../services/api';
+import authService from '../services/authService';
 import SplitBillModal from '../components/SplitBillModal';
 
 export default function Dashboard() {
@@ -37,30 +38,42 @@ export default function Dashboard() {
         setExpenses(my);
         setSharedExpenses(shared);
 
-        // 所有账单总额
+        const userEmail = authService.getCurrentUser()?.email;
+
+        // 所有账单总额（我创建的）
         const totalAmount = my.reduce((s, e) => s + Number(e.total_amount || 0), 0);
 
-        // 我需要支付的总额
-        let myOwed = 0;
-        my.forEach((e) => {
-          const me = e.participants?.find((p) =>
-            p.name === 'me (You)' || p.name === 'me'
-          );
+        // 计算某个 expense 里当前用户需要支付的金额
+        const calcMyShare = (e) => {
+          let share = 0;
+          // 找到匹配当前用户的 participant（优先用 email 匹配）
+          const me = e.participants?.find((p) => {
+            if (p.email && userEmail) {
+              return p.email.toLowerCase() === userEmail.toLowerCase();
+            }
+            // fallback：如果是自己创建的账单，me (You) 就是自己
+            return p.name === 'me (You)' || p.name === 'me';
+          });
           if (me && e.items) {
             (me.items || []).forEach((itemName) => {
               const shareCount = e.participants.filter((pp) => pp.items?.includes(itemName)).length;
               const item = e.items.find((i) => i.name === itemName);
-              if (item && shareCount > 0) myOwed += Number(item.price || 0) / shareCount;
+              if (item && shareCount > 0) share += Number(item.price || 0) / shareCount;
             });
           }
-        });
+          return share;
+        };
+
+        // 我在自己账单里的份额 + shared 账单里的份额
+        const myOwed = [...my, ...shared].reduce((s, e) => s + calcMyShare(e), 0);
 
         // 所有参与者去重
         const participants = new Set();
         my.forEach((e) => e.participants?.forEach((p) => participants.add(p.name)));
 
-        // 我平均每笔需要支付的金额
-        const avgOwed = my.length ? myOwed / my.length : 0;
+        // 平均每笔账单我需要支付的金额（含 shared）
+        const totalBills = my.length + shared.length;
+        const avgOwed = totalBills ? myOwed / totalBills : 0;
 
         setStats({
           myOwed,
@@ -111,8 +124,7 @@ export default function Dashboard() {
           onClick={() => navigate('/new-expense')}
           className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
         >
-          <Plus size={20} />
-          New Expense
+          <Plus size={20} /> New Expense
         </button>
       </div>
       <p className="text-gray-500 mb-6">Welcome back! Here's your expense overview.</p>
@@ -179,7 +191,7 @@ export default function Dashboard() {
                         <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
                           <span>{new Date(exp.created_at).toLocaleDateString()}</span>
                           {exp.items?.length > 0 && <span>{exp.items.length} items</span>}
-                          {exp.transcript && <span className="italic text-gray-400"> {exp.transcript.slice(0, 50)}…</span>}
+                          {exp.transcript && <span className="italic text-gray-400">{exp.transcript.slice(0, 50)}…</span>}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 ml-4" onClick={(e) => e.stopPropagation()}>

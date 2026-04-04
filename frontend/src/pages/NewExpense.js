@@ -375,12 +375,28 @@ const NewExpense = () => {
     setError(null);
     try {
       const finalItems = expandedItems.length > 0 ? expandedItems : (ocrResult.items || []);
+      const currentUser = authService.getCurrentUser();
+
       const participantsData = participants.map((name) => {
         const key = name.toLowerCase().trim();
         const indices = itemAssignments[key] || [];
         const items = indices.map((i) => finalItems[i]).filter(Boolean);
-        return { name, items: items.map((it) => it.name) };
+
+        // 判断 email
+        let email = null;
+        if (key === 'me (you)' || key === 'me') {
+          email = currentUser?.email || null;
+        } else {
+          const contact = contacts.find(
+            (c) => (c.nickname || c.friend_email?.split('@')[0] || '').toLowerCase() === key
+              || c.friend_email?.toLowerCase() === key
+          );
+          email = contact?.friend_email || null;
+        }
+
+        return { name, email, items: items.map((it) => it.name) };
       });
+
       await expenseAPI.createExpense({
         store_name: ocrResult.store_name || null,
         total_amount: ocrResult.total || 0,
@@ -498,10 +514,10 @@ const NewExpense = () => {
                     setOcrResult({
                       store_name: null,
                       total: parseFloat(manualTotal),
-                      subtotal: null,
+                      subtotal: parseFloat(manualTotal),
                       tax_amount: null,
                       tax_rate: null,
-                      items: [],
+                      items: [{ name: 'Total Bill', price: parseFloat(manualTotal), quantity: 1 }],
                       raw_text: null,
                     });
                     setActiveStep(2);
@@ -686,8 +702,13 @@ const NewExpense = () => {
             )}
             {transcript && (
               <div className="mt-4 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-left">
-                <h4 className="text-sm font-semibold text-gray-700 mb-1">Transcript:</h4>
-                <p className="text-sm text-gray-600">{transcript}</p>
+                <h4 className="text-sm font-semibold text-gray-700 mb-1">Transcript: <span className="text-xs text-gray-400 font-normal">(you can edit before submitting)</span></h4>
+                <textarea
+                  value={transcript}
+                  onChange={(e) => setTranscript(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-gray-700 resize-none"
+                />
               </div>
             )}
             <div className="mt-6 flex items-center justify-center gap-3">
@@ -726,10 +747,69 @@ const NewExpense = () => {
                   </div>
                 </div>
               )}
+
               {transcript && (
                 <div className="mb-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
-                  <h4 className="text-lg font-semibold mb-4">Voice Instructions</h4>
-                  <div className="p-4 bg-white border border-gray-200 rounded-md text-sm text-gray-600 italic">{transcript}</div>
+                  <h4 className="text-lg font-semibold mb-3">Voice Instructions</h4>
+                  <p className="text-xs text-gray-400 mb-2">You can edit the transcript and re-analyze if needed</p>
+                  <textarea
+                    value={transcript}
+                    onChange={(e) => setTranscript(e.target.value)}
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-gray-700 resize-none mb-3"
+                  />
+                  <button
+                    className="px-4 py-2 bg-amber-500 text-white text-sm rounded-lg hover:bg-amber-600 transition"
+                    disabled={sttLoading}
+                    onClick={async () => {
+                      if (!transcript.trim()) return;
+                      setSttLoading(true);
+                      try {
+                        const currentUser = authService.getCurrentUser();
+                        const currentUserName = currentUser?.email?.split('@')[0]?.toLowerCase() || null;
+                        const groupMembers = selectedGroupId
+                          ? contactGroups.find((g) => g.id === selectedGroupId)?.members
+                              ?.map((m) => (m.contact_nickname || m.contact_email?.split('@')[0]).toLowerCase())
+                              .filter(Boolean) || []
+                          : null;
+                        // Create a silent audio blob to reuse the STT endpoint
+                        // but override transcript by sending it as text
+                        // Instead, call backend with a fake tiny audio + edited transcript
+                        const formData = new FormData();
+                        // Use existing audioBlob or create a minimal one
+                        const blob = audioBlob || new Blob([], { type: 'audio/webm' });
+                        formData.append('audio', new File([blob], 'recording.webm', { type: 'audio/webm' }));
+                        if (groupMembers && groupMembers.length > 0) {
+                          formData.append('group_members', JSON.stringify(groupMembers));
+                        }
+                        if (ocrResult?.items?.length > 0) {
+                          const itemNames = ocrResult.items.map((i) => i.name);
+                          formData.append('ocr_items', JSON.stringify(itemNames));
+                        }
+                        if (currentUserName) {
+                          formData.append('current_user_name', currentUserName);
+                        }
+                        formData.append('override_transcript', transcript);
+
+                        const token = localStorage.getItem('auth_token');
+                        const response = await fetch('http://localhost:5001/api/stt/process-voice', {
+                          method: 'POST',
+                          headers: { ...(token && { Authorization: `Bearer ${token}` }) },
+                          body: formData,
+                        });
+                        const result = await response.json();
+                        setTranscript(transcript);
+                        setSttResult({ ...result, transcript });
+                      } catch (err) {
+                        console.error('Re-analyze error:', err);
+                      } finally {
+                        setSttLoading(false);
+                      }
+                    }}
+                  >
+                    {sttLoading ? 'Re-analyzing...' : '↻ Re-analyze'}
+                  </button>
+
                   {sttResult?.participants?.length > 0 && (
                     <div className="mt-4">
                       <h5 className="text-sm font-semibold text-gray-700 mb-2">Detected Participants:</h5>
@@ -744,13 +824,14 @@ const NewExpense = () => {
                   )}
                 </div>
               )}
+
               <div className="text-center flex items-center justify-center gap-3">
                 <button onClick={goBack} className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
                   ← Back
                 </button>
                 <button
                   className="inline-flex items-center gap-2 px-8 py-4 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
-                  onClick={() => setActiveStep(4)}
+                  onClick={() => { setStep4Initialized(false); setActiveStep(4); }}
                   disabled={loading}
                 >
                   Continue to Bill Split →

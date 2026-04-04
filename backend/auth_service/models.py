@@ -60,6 +60,7 @@ class ExpenseParticipant(Document):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     expense_id: uuid.UUID
     name: str
+    email: Optional[str] = None
     items: Optional[str] = None  # JSON string
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

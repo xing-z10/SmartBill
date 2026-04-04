@@ -163,8 +163,39 @@ async def create_contact_group(
 
 @router.get("/contact-groups", response_model=ContactGroupListResponse)
 async def get_contact_groups(current_user: User = Depends(get_current_user)):
-    groups = await ContactGroup.find(ContactGroup.user_id == current_user.id).sort(-ContactGroup.created_at).to_list()
-    group_responses = [await _build_group_response(g, current_user) for g in groups]
+    # 自己创建的 groups
+    my_groups = await ContactGroup.find(ContactGroup.user_id == current_user.id).sort(-ContactGroup.created_at).to_list()
+
+    # 自己作为成员的 groups（通过 contact 关联）
+    # 找到所有以当前用户为 friend 的 contacts
+    contacts_as_friend = await Contact.find(Contact.friend_user_id == current_user.id).to_list()
+    contact_ids_as_friend = [c.id for c in contacts_as_friend]
+
+    # 找到这些 contacts 所在的 group members
+    shared_group_ids = set()
+    if contact_ids_as_friend:
+        for cid in contact_ids_as_friend:
+            members = await ContactGroupMember.find(ContactGroupMember.contact_id == cid).to_list()
+            for m in members:
+                shared_group_ids.add(m.group_id)
+
+    # 获取这些 groups，排除已经是自己创建的
+    my_group_ids = {g.id for g in my_groups}
+    shared_groups = []
+    for gid in shared_group_ids:
+        if gid not in my_group_ids:
+            g = await ContactGroup.find_one(ContactGroup.id == gid)
+            if g:
+                shared_groups.append(g)
+
+    all_groups = my_groups + shared_groups
+
+    group_responses = []
+    for g in all_groups:
+        creator = await User.find_one(User.id == g.user_id)
+        if creator:
+            group_responses.append(await _build_group_response(g, creator))
+
     return ContactGroupListResponse(groups=group_responses, total=len(group_responses))
 
 

@@ -44,9 +44,9 @@ function App() {
           </div>
           <div className="flex-1 overflow-y-auto">
             <Routes>
-              <Route path="/login" element={<Navigate to="/new-expense" replace />} />
-              <Route path="/register" element={<Navigate to="/new-expense" replace />} />
-              <Route path="/" element={<Navigate to="/new-expense" replace />} />
+              <Route path="/login" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/register" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/new-expense" element={<ProtectedRoute><NewExpense /></ProtectedRoute>} />
               <Route path="/participants" element={<ProtectedRoute><Participants /></ProtectedRoute>} />

@@ -34,7 +34,7 @@ async def _build_expense_response(expense: Expense) -> ExpenseResponse:
         transcript=expense.transcript,
         items=[ExpenseItemSchema(name=i.name, price=i.price, quantity=i.quantity) for i in items],
         participants=[
-            ExpenseParticipantSchema(name=p.name, items=json.loads(p.items) if p.items else [])
+            ExpenseParticipantSchema(name=p.name, email=p.email, items=json.loads(p.items) if p.items else [])
             for p in participants
         ],
         created_at=expense.created_at
@@ -70,6 +70,7 @@ async def create_expense(
         await ExpenseParticipant(
             expense_id=expense.id,
             name=p_data.name,
+            email=p_data.email,
             items=json.dumps(p_data.items) if p_data.items else None
         ).insert()
 
